@@ -7,15 +7,8 @@ import { ensureProfile, setActiveGroup } from "@/lib/profile";
 import { makeGroupCode, normalizeCode } from "@/lib/groupCode";
 
 type Group = { id: string; name: string; code: string; owner_id: string };
-type Member = { user_id: string; role: string; display_name: string; joined_at: string };
-
-type GroupMember = {
-  user_id: string;
-  username?: string | null;
-  role: "owner" | "member";
-  joined_at?: string | null;
-};
-
+type MemberRole = "owner" | "member";
+type Member = { user_id: string; role: MemberRole; display_name: string; joined_at: string };
 
 export default function GroupPage() {
   const supabase = useMemo(() => supabaseBrowser(), []);
@@ -135,16 +128,15 @@ export default function GroupPage() {
     const merged: Member[] = (ms ?? [])
       .map((m: any) => ({
         user_id: m.user_id,
-        role: m.role,
+        role: (m.role as MemberRole) ?? "member",
         display_name: nameMap.get(m.user_id) ?? "—",
         joined_at: m.created_at,
       }))
-      .sort((a: GroupMember, b: GroupMember) => {
-  const ra = a.role === "owner" ? 0 : 1;
-  const rb = b.role === "owner" ? 0 : 1;
-  return ra - rb;
-});
-
+      .sort((a: Member, b: Member) => {
+        const ra = a.role === "owner" ? 0 : 1;
+        const rb = b.role === "owner" ? 0 : 1;
+        return ra - rb;
+      });
 
     setMembers(merged);
   }
@@ -402,9 +394,7 @@ export default function GroupPage() {
             {savingName ? "Speichere..." : "Speichern"}
           </button>
         </div>
-        <div className="text-xs opacity-70">
-          Dieser Name wird in deiner Gruppe angezeigt.
-        </div>
+        <div className="text-xs opacity-70">Dieser Name wird in deiner Gruppe angezeigt.</div>
       </div>
 
       {/* Aktive Gruppe */}
@@ -538,7 +528,9 @@ export default function GroupPage() {
           {status}
         </div>
       )}
+
+      {/* Deploy Marker */}
+      <div style={{ opacity: 0.5, fontSize: 12 }}>DEPLOY wl-journey13</div>
     </div>
   );
 }
-<div style={{opacity:.5,fontSize:12}}>DEPLOY ffc118e</div>
