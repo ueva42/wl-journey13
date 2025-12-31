@@ -9,6 +9,14 @@ import { makeGroupCode, normalizeCode } from "@/lib/groupCode";
 type Group = { id: string; name: string; code: string; owner_id: string };
 type Member = { user_id: string; role: string; display_name: string; joined_at: string };
 
+type GroupMember = {
+  user_id: string;
+  username?: string | null;
+  role: "owner" | "member";
+  joined_at?: string | null;
+};
+
+
 export default function GroupPage() {
   const supabase = useMemo(() => supabaseBrowser(), []);
   const router = useRouter();
@@ -131,7 +139,12 @@ export default function GroupPage() {
         display_name: nameMap.get(m.user_id) ?? "—",
         joined_at: m.created_at,
       }))
-      .sort((a, b) => (a.role === "owner" ? -1 : 1));
+      .sort((a: GroupMember, b: GroupMember) => {
+  const ra = a.role === "owner" ? 0 : 1;
+  const rb = b.role === "owner" ? 0 : 1;
+  return ra - rb;
+});
+
 
     setMembers(merged);
   }
