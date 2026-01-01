@@ -1,9 +1,28 @@
 import "./globals.css";
+import type { Metadata, Viewport } from "next";
 import Nav from "@/components/Nav";
 
-export const metadata = {
+export const metadata: Metadata = {
+  applicationName: "WL-Journey",
   title: "WL-Journey",
   description: "Gewicht & Gruppe",
+  manifest: "/manifest.webmanifest",
+  icons: {
+    icon: [
+      { url: "/icons/icon-192.png", sizes: "192x192", type: "image/png" },
+      { url: "/icons/icon-512.png", sizes: "512x512", type: "image/png" },
+    ],
+    apple: [{ url: "/icons/icon-192.png" }],
+  },
+  appleWebApp: {
+    capable: true,
+    statusBarStyle: "black-translucent",
+    title: "WL-Journey",
+  },
+};
+
+export const viewport: Viewport = {
+  themeColor: "#05060a",
 };
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
@@ -30,9 +49,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
 
         <Nav />
 
-        <main className="mx-auto w-full max-w-6xl px-4 py-6">
-          {children}
-        </main>
+        <main className="mx-auto w-full max-w-6xl px-4 py-6">{children}</main>
       </body>
     </html>
   );
