@@ -9,6 +9,10 @@ function isEmailLike(v: string) {
   return s.includes("@") && s.includes(".");
 }
 
+function originSafe() {
+  return typeof window !== "undefined" ? window.location.origin : "";
+}
+
 export default function LoginPage() {
   const supabase = useMemo(() => supabaseBrowser(), []);
   const router = useRouter();
@@ -55,21 +59,21 @@ export default function LoginPage() {
 
       setBusy(true);
 
-      // Hinweis: Wenn bei dir "Email Confirmations" aktiv ist, muss der Nutzer erst bestätigen.
+      // WICHTIG: immer auf /auth/callback redirecten (nicht direkt /dashboard),
+      // damit Supabase den Token sauber verarbeitet und Session setzt.
+      const redirectBase = originSafe();
+      const emailRedirectTo = redirectBase ? `${redirectBase}/auth/callback` : undefined;
+
       const { error } = await supabase.auth.signUp({
         email: e,
         password,
-        options: {
-          // falls Email-Confirmation aktiv: Link führt nach dem Klick hierhin
-          emailRedirectTo:
-            typeof window !== "undefined" ? `${window.location.origin}/dashboard` : undefined,
-        },
+        options: { emailRedirectTo },
       });
 
       if (error) throw error;
 
       setStatus(
-        "Account erstellt. Falls E-Mail-Bestätigung aktiv ist: Bitte bestätige die Mail. Danach kannst du dich einloggen."
+        "Account erstellt. Bitte bestätige die Mail (Spam prüfen). Danach kannst du dich einloggen."
       );
       setMode("login");
       setPassword("");
@@ -89,10 +93,15 @@ export default function LoginPage() {
 
       setBusy(true);
 
-      // Supabase schickt eine Reset-Mail. Der Link führt typischerweise auf /auth/callback
-      // oder auf eine Seite, die du dafür baust (z.B. /reset). Für den Start reicht das so.
+      // Reset-Link soll ebenfalls über /auth/callback laufen.
+      // Optional: next param, falls du später eine /reset Seite hast.
+      const redirectBase = originSafe();
+      const redirectTo = redirectBase
+        ? `${redirectBase}/auth/callback?next=/reset`
+        : undefined;
+
       const { error } = await supabase.auth.resetPasswordForEmail(e, {
-        redirectTo: typeof window !== "undefined" ? `${window.location.origin}/reset` : undefined,
+        redirectTo,
       });
 
       if (error) throw error;
@@ -245,7 +254,9 @@ export default function LoginPage() {
         </div>
 
         {status ? (
-          <div className="rounded-2xl border border-white/10 bg-white/5 p-4 text-sm">{status}</div>
+          <div className="rounded-2xl border border-white/10 bg-white/5 p-4 text-sm">
+            {status}
+          </div>
         ) : null}
       </div>
     </div>
