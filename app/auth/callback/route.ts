@@ -7,7 +7,6 @@ export async function GET(request: Request) {
   const code = url.searchParams.get("code");
   const next = url.searchParams.get("next") ?? "/";
 
-  // Wenn Supabase Fehlerparameter mitsendet, direkt zur Login-Seite
   const error = url.searchParams.get("error");
   const error_description = url.searchParams.get("error_description");
   if (error) {
@@ -16,11 +15,9 @@ export async function GET(request: Request) {
     );
   }
 
-  if (!code) {
-    return NextResponse.redirect(`${url.origin}/login`);
-  }
+  if (!code) return NextResponse.redirect(`${url.origin}/login`);
 
-  const cookieStore = cookies();
+  const cookieStore = await cookies();
 
   const supabase = createServerClient(
     process.env.NEXT_PUBLIC_SUPABASE_URL!,
