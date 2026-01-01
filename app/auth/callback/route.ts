@@ -1,26 +1,52 @@
 import { NextResponse } from "next/server";
 import { cookies } from "next/headers";
-import { createRouteHandlerClient } from "@supabase/auth-helpers-nextjs";
+import { createServerClient } from "@supabase/ssr";
 
 export async function GET(request: Request) {
-  const { searchParams, origin } = new URL(request.url);
-  const code = searchParams.get("code");
-  const next = searchParams.get("next") ?? "/";
+  const url = new URL(request.url);
+  const code = url.searchParams.get("code");
+  const next = url.searchParams.get("next") ?? "/";
+
+  // Wenn Supabase Fehlerparameter mitsendet, direkt zur Login-Seite
+  const error = url.searchParams.get("error");
+  const error_description = url.searchParams.get("error_description");
+  if (error) {
+    return NextResponse.redirect(
+      `${url.origin}/login?error=${encodeURIComponent(error_description ?? error)}`
+    );
+  }
 
   if (!code) {
-    // Kein Code -> zurück zur Login-Seite oder Start
-    return NextResponse.redirect(`${origin}/login`);
+    return NextResponse.redirect(`${url.origin}/login`);
   }
 
-  const supabase = createRouteHandlerClient({ cookies });
+  const cookieStore = cookies();
 
-  // Wichtig: Code gegen Session tauschen
-  const { error } = await supabase.auth.exchangeCodeForSession(code);
+  const supabase = createServerClient(
+    process.env.NEXT_PUBLIC_SUPABASE_URL!,
+    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
+    {
+      cookies: {
+        get(name) {
+          return cookieStore.get(name)?.value;
+        },
+        set(name, value, options) {
+          cookieStore.set({ name, value, ...options });
+        },
+        remove(name, options) {
+          cookieStore.set({ name, value: "", ...options, maxAge: 0 });
+        },
+      },
+    }
+  );
 
-  // Bei Fehler -> Login mit Hinweis
-  if (error) {
-    return NextResponse.redirect(`${origin}/login?error=${encodeURIComponent(error.message)}`);
+  const { error: exchangeError } = await supabase.auth.exchangeCodeForSession(code);
+
+  if (exchangeError) {
+    return NextResponse.redirect(
+      `${url.origin}/login?error=${encodeURIComponent(exchangeError.message)}`
+    );
   }
 
-  return NextResponse.redirect(`${origin}${next}`);
+  return NextResponse.redirect(`${url.origin}${next}`);
 }
