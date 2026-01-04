@@ -37,9 +37,30 @@ function fmtDateDE(iso: string) {
   return `${d}.${m}.${y}`;
 }
 
-function toNumberSafe(v: any) {
-  const n = Number(v);
+// ----- NEW: DE number formatting + comma parsing -----
+
+const fmtKg = new Intl.NumberFormat("de-DE", {
+  minimumFractionDigits: 1,
+  maximumFractionDigits: 1,
+});
+
+function normalizeDecimalInput(raw: string) {
+  // " 82,4 " -> "82.4"
+  // "82.4" -> "82.4"
+  // remove spaces, replace comma with dot
+  return raw.trim().replace(/\s+/g, "").replace(",", ".");
+}
+
+function parseDecimalDE(raw: string) {
+  const s = normalizeDecimalInput(raw);
+  if (!s) return NaN;
+  const n = Number(s);
   return Number.isFinite(n) ? n : NaN;
+}
+
+function formatInputForDE(n: number) {
+  // puts comma in edit fields when we set default values
+  return fmtKg.format(n);
 }
 
 function daysBetween(aISO: string, bISO: string) {
@@ -128,13 +149,17 @@ function MiniTimeline({
 function ModernTooltip({ active, payload, label }: any) {
   if (!active || !payload?.length) return null;
   const w = payload[0]?.value;
+  const num = Number(w);
+
   return (
     <div
       className="rounded-2xl border border-white/10 bg-black/70 px-3 py-2 text-sm text-zinc-100"
       style={{ backdropFilter: "blur(8px)" }}
     >
       <div className="text-xs text-zinc-400 mb-1">{fmtDateDE(String(label))}</div>
-      <div className="font-semibold">{Number(w).toFixed(1)} kg</div>
+      <div className="font-semibold">
+        {Number.isFinite(num) ? `${fmtKg.format(num)} kg` : "—"}
+      </div>
     </div>
   );
 }
@@ -149,10 +174,10 @@ export default function DashboardPage() {
 
   // Eingabe
   const [date, setDate] = useState(todayISO());
-  const [weight, setWeight] = useState<string>("");
+  const [weight, setWeight] = useState<string>(""); // raw string with comma allowed
 
   // Zielgewicht
-  const [targetWeight, setTargetWeight] = useState<string>("");
+  const [targetWeight, setTargetWeight] = useState<string>(""); // raw string with comma allowed
   const [savingTarget, setSavingTarget] = useState(false);
 
   // Einträge (neu -> alt)
@@ -160,7 +185,7 @@ export default function DashboardPage() {
 
   // Edit
   const [editingId, setEditingId] = useState<string | null>(null);
-  const [editWeight, setEditWeight] = useState<string>("");
+  const [editWeight, setEditWeight] = useState<string>(""); // raw string with comma allowed
 
   // Chart-Paging + iOS-sicherer Swipe
   const CHART_WINDOW = 10;
@@ -196,7 +221,10 @@ export default function DashboardPage() {
       .eq("user_id", userId)
       .maybeSingle();
     if (error) throw error;
-    setTargetWeight(data?.target_weight_kg == null ? "" : String(data.target_weight_kg));
+
+    // store as DE-formatted string for user editing
+    const tw = data?.target_weight_kg;
+    setTargetWeight(tw == null ? "" : formatInputForDE(Number(tw)));
   }
 
   async function loadWeighIns(userId: string) {
@@ -223,13 +251,17 @@ export default function DashboardPage() {
       if (!myUserId) throw new Error("Nicht eingeloggt.");
       setSavingTarget(true);
       setStatus("");
-      const n = toNumberSafe(targetWeight);
-      if (!Number.isFinite(n) || n <= 0) throw new Error("Zielgewicht ungültig.");
+
+      const n = parseDecimalDE(targetWeight);
+      if (!Number.isFinite(n) || n <= 0) throw new Error("Zielgewicht ungültig (z.B. 78,0).");
+
       const { error } = await supabase
         .from("profiles")
         .update({ target_weight_kg: n })
         .eq("user_id", myUserId);
       if (error) throw error;
+
+      setTargetWeight(formatInputForDE(n));
       setStatus("✅ Zielgewicht gespeichert.");
     } catch (e: any) {
       setStatus(e?.message ?? String(e));
@@ -245,9 +277,10 @@ export default function DashboardPage() {
       setStatus("");
 
       const entryDate = date;
-      const w = toNumberSafe(weight);
+      const w = parseDecimalDE(weight);
+
       if (!entryDate) throw new Error("Datum fehlt.");
-      if (!Number.isFinite(w) || w <= 0) throw new Error("Gewicht ungültig.");
+      if (!Number.isFinite(w) || w <= 0) throw new Error("Gewicht ungültig (z.B. 82,4).");
 
       const { data: existing, error: exErr } = await supabase
         .from("weigh_ins")
@@ -279,7 +312,7 @@ export default function DashboardPage() {
 
   function startEdit(id: string, current: number) {
     setEditingId(id);
-    setEditWeight(String(current));
+    setEditWeight(formatInputForDE(current)); // show comma in edit field
     setStatus("");
   }
 
@@ -293,14 +326,17 @@ export default function DashboardPage() {
       if (!myUserId) throw new Error("Nicht eingeloggt.");
       setBusy(true);
       setStatus("");
-      const w = toNumberSafe(editWeight);
-      if (!Number.isFinite(w) || w <= 0) throw new Error("Gewicht ungültig.");
+
+      const w = parseDecimalDE(editWeight);
+      if (!Number.isFinite(w) || w <= 0) throw new Error("Gewicht ungültig (z.B. 82,4).");
+
       const { error } = await supabase
         .from("weigh_ins")
         .update({ weight_kg: w })
         .eq("id", id)
         .eq("user_id", myUserId);
       if (error) throw error;
+
       setEditingId(null);
       setEditWeight("");
       await loadWeighIns(myUserId);
@@ -316,12 +352,14 @@ export default function DashboardPage() {
       if (!myUserId) throw new Error("Nicht eingeloggt.");
       setBusy(true);
       setStatus("");
+
       const { error } = await supabase
         .from("weigh_ins")
         .delete()
         .eq("id", id)
         .eq("user_id", myUserId);
       if (error) throw error;
+
       await loadWeighIns(myUserId);
     } catch (e: any) {
       setStatus(e?.message ?? String(e));
@@ -333,11 +371,13 @@ export default function DashboardPage() {
   // Kennzahlen
   const latest = entries[0] ?? null;
   const prevWeek = useMemo(() => findPrevWeekEntry(entries), [entries]);
+
   const diffToGoal = useMemo(() => {
-    const tw = toNumberSafe(targetWeight);
+    const tw = parseDecimalDE(targetWeight);
     if (!latest || !Number.isFinite(tw)) return null;
     return latest.weight_kg - tw;
   }, [latest, targetWeight]);
+
   const diffToPrevWeek = useMemo(() => {
     if (!latest || !prevWeek) return null;
     return latest.weight_kg - prevWeek.weight_kg;
@@ -445,8 +485,11 @@ export default function DashboardPage() {
                 value={weight}
                 onChange={(e) => setWeight(e.target.value)}
                 inputMode="decimal"
-                placeholder="z.B. 82.4"
+                placeholder="z.B. 82,4"
               />
+              <div className="mt-1 text-[11px] text-zinc-500">
+                Tipp: Komma oder Punkt geht (82,4 / 82.4)
+              </div>
             </div>
 
             <Button onClick={addWeighIn} disabled={busy || !myUserId} variant="solid" className="w-full">
@@ -460,7 +503,7 @@ export default function DashboardPage() {
               <Input
                 value={targetWeight}
                 onChange={(e) => setTargetWeight(e.target.value)}
-                placeholder="z.B. 78.0"
+                placeholder="z.B. 78,0"
                 inputMode="decimal"
               />
             </div>
@@ -474,7 +517,7 @@ export default function DashboardPage() {
             <div className="rounded-2xl border border-white/10 bg-black/25 p-4">
               <div className="text-xs text-zinc-400">Letzter Eintrag</div>
               <div className="text-lg font-semibold">
-                {latest ? `${latest.weight_kg.toFixed(1)} kg` : "—"}
+                {latest ? `${fmtKg.format(latest.weight_kg)} kg` : "—"}
               </div>
               <div className="text-xs text-zinc-500">{latest ? fmtDateDE(latest.entry_date) : ""}</div>
             </div>
@@ -482,7 +525,9 @@ export default function DashboardPage() {
             <div className="rounded-2xl border border-white/10 bg-black/25 p-4">
               <div className="text-xs text-zinc-400">Differenz zum Ziel</div>
               <div className="text-lg font-semibold">
-                {diffToGoal == null ? "—" : `${diffToGoal > 0 ? "+" : ""}${diffToGoal.toFixed(1)} kg`}
+                {diffToGoal == null
+                  ? "—"
+                  : `${diffToGoal > 0 ? "+" : ""}${fmtKg.format(diffToGoal)} kg`}
               </div>
             </div>
 
@@ -491,7 +536,7 @@ export default function DashboardPage() {
               <div className="text-lg font-semibold">
                 {diffToPrevWeek == null
                   ? "—"
-                  : `${diffToPrevWeek > 0 ? "+" : ""}${diffToPrevWeek.toFixed(1)} kg`}
+                  : `${diffToPrevWeek > 0 ? "+" : ""}${fmtKg.format(diffToPrevWeek)} kg`}
               </div>
               <div className="text-xs text-zinc-500">
                 {prevWeek && latest
@@ -598,7 +643,6 @@ export default function DashboardPage() {
                   }}
                 />
 
-                {/* dünne Overlay-Linie für crisp look */}
                 <Line
                   type="monotone"
                   dataKey="weight"
@@ -645,9 +689,10 @@ export default function DashboardPage() {
                             onChange={(ev) => setEditWeight(ev.target.value)}
                             className="w-28"
                             inputMode="decimal"
+                            placeholder="z.B. 82,4"
                           />
                         ) : (
-                          e.weight_kg.toFixed(1)
+                          fmtKg.format(e.weight_kg)
                         )}
                       </td>
                       <td className="py-3">

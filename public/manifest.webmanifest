@@ -1,7 +1,7 @@
 {
   "name": "WL-Journey",
   "short_name": "WL-Journey",
-  "start_url": "/",
+  "start_url": "/dashboard",
   "scope": "/",
   "display": "standalone",
   "background_color": "#0b0b0b",
