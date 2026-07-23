@@ -1,6 +1,7 @@
 import "./globals.css";
 import type { Metadata, Viewport } from "next";
 import Nav from "@/components/Nav";
+import PwaRegister from "@/components/PwaRegister";
 
 export const metadata: Metadata = {
   applicationName: "WL-Journey",
@@ -47,6 +48,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
           <div className="absolute inset-0 opacity-[0.06] bg-[radial-gradient(circle,rgba(255,255,255,0.9)_1px,transparent_1px)] [background-size:3px_3px]" />
         </div>
 
+        <PwaRegister />
         <Nav />
 
         <main className="mx-auto w-full max-w-6xl px-4 py-6">{children}</main>

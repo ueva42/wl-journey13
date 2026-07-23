@@ -11,6 +11,10 @@ export async function middleware(req: NextRequest) {
     p === "/favicon.ico" ||
     p === "/robots.txt" ||
     p === "/sitemap.xml" ||
+    p === "/sw.js" ||
+    p === "/manifest.webmanifest" ||
+    p.startsWith("/icons/") ||
+    p.startsWith("/workbox-") ||
     p.startsWith("/auth") || // z.B. /auth/callback
     p.startsWith("/login") ||
     p.startsWith("/signup") ||
@@ -58,7 +62,9 @@ export async function middleware(req: NextRequest) {
   return res;
 }
 
-// Läuft auf allem außer statischen Assets
+// Läuft auf allem außer statischen / PWA Assets
 export const config = {
-  matcher: ["/((?!_next/static|_next/image|favicon.ico).*)"],
+  matcher: [
+    "/((?!_next/static|_next/image|favicon.ico|sw\\.js|manifest\\.webmanifest|icons/|workbox-).*)",
+  ],
 };
