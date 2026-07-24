@@ -47,13 +47,14 @@ create policy "persons_delete_own"
 
 grant select, insert, update, delete on public.persons to authenticated;
 
--- 3) Eine Person pro bestehendem Profil
+-- 3) Eine Person pro bestehendem Profil (nur wenn Auth-User noch existiert)
 insert into public.persons (owner_user_id, display_name, target_weight_kg)
 select
   p.user_id,
   coalesce(nullif(trim(p.display_name), ''), 'Ich'),
   p.target_weight_kg
 from public.profiles p
+inner join auth.users u on u.id = p.user_id
 where not exists (
   select 1 from public.persons x where x.owner_user_id = p.user_id
 );

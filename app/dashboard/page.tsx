@@ -8,9 +8,9 @@ import {
   YAxis,
   Tooltip,
   CartesianGrid,
-  Area,
-  AreaChart,
   Line,
+  LineChart,
+  Legend,
 } from "recharts";
 
 import { Card, CardHeader, CardBody, Divider } from "@/components/ui/Card";
@@ -32,9 +32,21 @@ type WeighIn = {
   id: string;
   user_id: string;
   person_id: string;
-  entry_date: string; // YYYY-MM-DD
+  entry_date: string;
   weight_kg: number;
+  height_cm: number | null;
 };
+
+const PERSON_COLORS = [
+  "#ec4899",
+  "#22d3ee",
+  "#34d399",
+  "#fbbf24",
+  "#a78bfa",
+  "#fb7185",
+  "#38bdf8",
+  "#4ade80",
+];
 
 function todayISO() {
   const d = new Date();
@@ -49,17 +61,17 @@ function fmtDateDE(iso: string) {
   return `${d}.${m}.${y}`;
 }
 
-// ----- NEW: DE number formatting + comma parsing -----
-
 const fmtKg = new Intl.NumberFormat("de-DE", {
   minimumFractionDigits: 1,
   maximumFractionDigits: 1,
 });
 
+const fmtCm = new Intl.NumberFormat("de-DE", {
+  minimumFractionDigits: 0,
+  maximumFractionDigits: 1,
+});
+
 function normalizeDecimalInput(raw: string) {
-  // " 82,4 " -> "82.4"
-  // "82.4" -> "82.4"
-  // remove spaces, replace comma with dot
   return raw.trim().replace(/\s+/g, "").replace(",", ".");
 }
 
@@ -71,7 +83,6 @@ function parseDecimalDE(raw: string) {
 }
 
 function formatInputForDE(n: number) {
-  // puts comma in edit fields when we set default values
   return fmtKg.format(n);
 }
 
@@ -93,7 +104,6 @@ function findPrevWeekEntry(entriesDesc: WeighIn[]) {
   return null;
 }
 
-// Mini-Timeline: Dots wenn wenige Seiten, sonst Slider
 function MiniTimeline({
   pageCount,
   currentPage,
@@ -150,7 +160,6 @@ function MiniTimeline({
         })}
       </div>
       <span className="text-xs text-zinc-400">Älter</span>
-
       <span className="text-xs text-zinc-400 ml-2">
         Seite {currentPage + 1}/{pageCount}
       </span>
@@ -158,21 +167,190 @@ function MiniTimeline({
   );
 }
 
-function ModernTooltip({ active, payload, label }: any) {
+function MultiTooltip({
+  active,
+  payload,
+  label,
+  unit,
+  nameByKey,
+}: {
+  active?: boolean;
+  payload?: any[];
+  label?: string;
+  unit: string;
+  nameByKey: Record<string, string>;
+}) {
   if (!active || !payload?.length) return null;
-  const w = payload[0]?.value;
-  const num = Number(w);
-
   return (
     <div
       className="rounded-2xl border border-white/10 bg-black/70 px-3 py-2 text-sm text-zinc-100"
       style={{ backdropFilter: "blur(8px)" }}
     >
       <div className="text-xs text-zinc-400 mb-1">{fmtDateDE(String(label))}</div>
-      <div className="font-semibold">
-        {Number.isFinite(num) ? `${fmtKg.format(num)} kg` : "—"}
+      <div className="space-y-1">
+        {payload.map((p) => {
+          const n = Number(p.value);
+          if (!Number.isFinite(n)) return null;
+          const name = nameByKey[p.dataKey] ?? p.dataKey;
+          const formatted = unit === "kg" ? fmtKg.format(n) : fmtCm.format(n);
+          return (
+            <div key={p.dataKey} className="flex items-center gap-2">
+              <span
+                className="inline-block h-2 w-2 rounded-full"
+                style={{ background: p.color }}
+              />
+              <span className="text-zinc-300">{name}:</span>
+              <span className="font-semibold">
+                {formatted} {unit}
+              </span>
+            </div>
+          );
+        })}
       </div>
     </div>
+  );
+}
+
+function MultiPersonChart({
+  title,
+  subtitle,
+  chartData,
+  persons,
+  dataPrefix,
+  unit,
+  rangeLabel,
+  pageCount,
+  currentPage,
+  onJump,
+  onNewer,
+  onOlder,
+  canNewer,
+  canOlder,
+  onPointerDown,
+  onPointerUp,
+  onPointerCancel,
+}: {
+  title: string;
+  subtitle: string;
+  chartData: Record<string, any>[];
+  persons: Person[];
+  dataPrefix: "w_" | "h_";
+  unit: "kg" | "cm";
+  rangeLabel: string;
+  pageCount: number;
+  currentPage: number;
+  onJump: (page: number) => void;
+  onNewer: () => void;
+  onOlder: () => void;
+  canNewer: boolean;
+  canOlder: boolean;
+  onPointerDown: (e: React.PointerEvent<HTMLDivElement>) => void;
+  onPointerUp: (e: React.PointerEvent<HTMLDivElement>) => void;
+  onPointerCancel: () => void;
+}) {
+  const nameByKey = useMemo(() => {
+    const m: Record<string, string> = {};
+    for (const p of persons) m[`${dataPrefix}${p.id}`] = p.display_name;
+    return m;
+  }, [persons, dataPrefix]);
+
+  return (
+    <Card>
+      <CardHeader
+        title={title}
+        subtitle={subtitle}
+        right={
+          <div className="flex gap-2">
+            <Button onClick={onNewer} disabled={!canNewer}>
+              Neuer
+            </Button>
+            <Button onClick={onOlder} disabled={!canOlder}>
+              Älter
+            </Button>
+          </div>
+        }
+      />
+      <Divider />
+      <CardBody>
+        <div className="flex items-center justify-between gap-3">
+          <div className="text-xs text-zinc-400">{rangeLabel || "—"}</div>
+          {pageCount > 1 ? (
+            <div className="text-xs text-zinc-500">
+              Seite {currentPage + 1}/{pageCount}
+            </div>
+          ) : null}
+        </div>
+
+        <MiniTimeline pageCount={pageCount} currentPage={currentPage} onJump={onJump} />
+
+        <div
+          className="mt-3 rounded-2xl border border-white/10 bg-black/20 p-2"
+          style={{
+            width: "100%",
+            height: 360,
+            minWidth: 0,
+            touchAction: "pan-y",
+            userSelect: "none",
+            WebkitUserSelect: "none",
+          }}
+          onPointerDown={onPointerDown}
+          onPointerUp={onPointerUp}
+          onPointerCancel={onPointerCancel}
+        >
+          {chartData.length === 0 ? (
+            <div className="flex h-full items-center justify-center text-sm text-zinc-400">
+              Noch keine Daten.
+            </div>
+          ) : (
+            <ResponsiveContainer>
+              <LineChart data={chartData} margin={{ top: 10, right: 18, left: 0, bottom: 0 }}>
+                <CartesianGrid stroke="rgba(255,255,255,0.06)" vertical={false} />
+                <XAxis
+                  dataKey="date"
+                  tickFormatter={(v) => String(v).slice(5)}
+                  tick={{ fill: "rgba(255,255,255,0.55)", fontSize: 12 }}
+                  axisLine={{ stroke: "rgba(255,255,255,0.10)" }}
+                  tickLine={false}
+                />
+                <YAxis
+                  domain={["auto", "auto"]}
+                  tick={{ fill: "rgba(255,255,255,0.55)", fontSize: 12 }}
+                  axisLine={false}
+                  tickLine={false}
+                  width={42}
+                />
+                <Tooltip
+                  content={
+                    <MultiTooltip unit={unit} nameByKey={nameByKey} />
+                  }
+                />
+                <Legend
+                  wrapperStyle={{ color: "rgba(255,255,255,0.7)", fontSize: 12 }}
+                  formatter={(value) => nameByKey[String(value)] ?? value}
+                />
+                {persons.map((p, idx) => (
+                  <Line
+                    key={p.id}
+                    type="monotone"
+                    dataKey={`${dataPrefix}${p.id}`}
+                    name={`${dataPrefix}${p.id}`}
+                    stroke={PERSON_COLORS[idx % PERSON_COLORS.length]}
+                    strokeWidth={2.5}
+                    dot={{ r: 3 }}
+                    connectNulls
+                    activeDot={{ r: 5 }}
+                  />
+                ))}
+              </LineChart>
+            </ResponsiveContainer>
+          )}
+        </div>
+
+        <div className="mt-2 text-xs text-zinc-400">
+          Alle Personen in einem Diagramm · links/rechts wischen zum Blättern.
+        </div>
+      </CardBody>
+    </Card>
   );
 }
 
@@ -186,24 +364,21 @@ export default function DashboardPage() {
   const [persons, setPersons] = useState<Person[]>([]);
   const [activePersonId, setActivePersonId] = useState<string | null>(null);
 
-  // Eingabe
   const [date, setDate] = useState(todayISO());
-  const [weight, setWeight] = useState<string>(""); // raw string with comma allowed
+  const [weight, setWeight] = useState<string>("");
+  const [height, setHeight] = useState<string>("");
 
-  // Zielgewicht
-  const [targetWeight, setTargetWeight] = useState<string>(""); // raw string with comma allowed
+  const [targetWeight, setTargetWeight] = useState<string>("");
   const [savingTarget, setSavingTarget] = useState(false);
 
-  // Einträge (neu -> alt)
-  const [entries, setEntries] = useState<WeighIn[]>([]);
+  const [allEntries, setAllEntries] = useState<WeighIn[]>([]);
 
-  // Edit
   const [editingId, setEditingId] = useState<string | null>(null);
-  const [editWeight, setEditWeight] = useState<string>(""); // raw string with comma allowed
+  const [editWeight, setEditWeight] = useState<string>("");
+  const [editHeight, setEditHeight] = useState<string>("");
 
-  // Chart-Paging + iOS-sicherer Swipe
   const CHART_WINDOW = 10;
-  const [chartOffset, setChartOffset] = useState(0); // 0 = neueste
+  const [chartOffset, setChartOffset] = useState(0);
   const [swipeStartX, setSwipeStartX] = useState<number | null>(null);
   const [swipeStartTime, setSwipeStartTime] = useState<number | null>(null);
 
@@ -224,6 +399,39 @@ export default function DashboardPage() {
     return active;
   }
 
+  async function loadAllWeighIns(personIds: string[]) {
+    if (!personIds.length) {
+      setAllEntries([]);
+      setChartOffset(0);
+      return;
+    }
+    const { data, error } = await supabase
+      .from("weigh_ins")
+      .select("id, user_id, person_id, entry_date, weight_kg, height_cm")
+      .in("person_id", personIds)
+      .order("entry_date", { ascending: false });
+    if (error) {
+      if (/height_cm/i.test(error.message || "")) {
+        throw new Error(
+          "Spalte height_cm fehlt. Bitte supabase/add_height_cm.sql im SQL Editor ausführen."
+        );
+      }
+      throw error;
+    }
+
+    setAllEntries(
+      (data ?? []).map((x: any) => ({
+        id: x.id,
+        user_id: x.user_id,
+        person_id: x.person_id,
+        entry_date: x.entry_date,
+        weight_kg: Number(x.weight_kg),
+        height_cm: x.height_cm == null ? null : Number(x.height_cm),
+      }))
+    );
+    setChartOffset(0);
+  }
+
   useEffect(() => {
     (async () => {
       try {
@@ -234,13 +442,13 @@ export default function DashboardPage() {
           setMyUserId(null);
           setPersons([]);
           setActivePersonId(null);
-          setEntries([]);
+          setAllEntries([]);
           return;
         }
         setMyUserId(user.id);
         const list = await loadOrCreatePersons(user.id);
-        const active = applyActivePerson(list);
-        if (active) await loadWeighIns(active.id);
+        applyActivePerson(list);
+        await loadAllWeighIns(list.map((p) => p.id));
       } catch (e: any) {
         setStatus(e?.message ?? String(e));
       }
@@ -248,49 +456,19 @@ export default function DashboardPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  async function loadWeighIns(personId: string) {
-    const { data, error } = await supabase
-      .from("weigh_ins")
-      .select("id, user_id, person_id, entry_date, weight_kg")
-      .eq("person_id", personId)
-      .order("entry_date", { ascending: false });
-    if (error) throw error;
-
-    setEntries(
-      (data ?? []).map((x: any) => ({
-        id: x.id,
-        user_id: x.user_id,
-        person_id: x.person_id,
-        entry_date: x.entry_date,
-        weight_kg: Number(x.weight_kg),
-      }))
-    );
-    setChartOffset(0);
-  }
-
   async function selectPerson(id: string) {
-    const active = applyActivePerson(persons, id);
+    applyActivePerson(persons, id);
     setEditingId(null);
     setEditWeight("");
-    if (active) {
-      try {
-        setStatus("");
-        await loadWeighIns(active.id);
-      } catch (e: any) {
-        setStatus(e?.message ?? String(e));
-      }
-    } else {
-      setEntries([]);
-    }
+    setEditHeight("");
   }
 
   async function handleCreatePerson(name: string) {
     if (!myUserId) throw new Error("Nicht eingeloggt.");
     const created = await createPerson(myUserId, name);
     const list = [...persons, created];
-    const active = applyActivePerson(list, created.id);
-    setEntries([]);
-    if (active) await loadWeighIns(active.id);
+    applyActivePerson(list, created.id);
+    await loadAllWeighIns(list.map((p) => p.id));
   }
 
   async function handleRenamePerson(id: string, name: string) {
@@ -304,9 +482,8 @@ export default function DashboardPage() {
   async function handleDeletePerson(id: string) {
     await deletePerson(id);
     const list = persons.filter((p) => p.id !== id);
-    const active = applyActivePerson(list);
-    if (active) await loadWeighIns(active.id);
-    else setEntries([]);
+    applyActivePerson(list);
+    await loadAllWeighIns(list.map((p) => p.id));
   }
 
   async function saveTarget() {
@@ -344,9 +521,14 @@ export default function DashboardPage() {
 
       const entryDate = date;
       const w = parseDecimalDE(weight);
+      const hRaw = height.trim();
+      const h = hRaw ? parseDecimalDE(height) : null;
 
       if (!entryDate) throw new Error("Datum fehlt.");
       if (!Number.isFinite(w) || w <= 0) throw new Error("Gewicht ungültig (z.B. 82,4).");
+      if (hRaw && (!Number.isFinite(h!) || h! <= 0)) {
+        throw new Error("Größe ungültig (z.B. 178 oder 178,5).");
+      }
 
       const { data: existing, error: exErr } = await supabase
         .from("weigh_ins")
@@ -365,11 +547,20 @@ export default function DashboardPage() {
         person_id: activePersonId,
         entry_date: entryDate,
         weight_kg: w,
+        height_cm: hRaw ? h : null,
       });
-      if (error) throw error;
+      if (error) {
+        if (/height_cm/i.test(error.message || "")) {
+          throw new Error(
+            "Spalte height_cm fehlt. Bitte supabase/add_height_cm.sql im SQL Editor ausführen."
+          );
+        }
+        throw error;
+      }
 
       setWeight("");
-      await loadWeighIns(activePersonId);
+      setHeight("");
+      await loadAllWeighIns(persons.map((p) => p.id));
     } catch (e: any) {
       setStatus(e?.message ?? String(e));
     } finally {
@@ -377,15 +568,17 @@ export default function DashboardPage() {
     }
   }
 
-  function startEdit(id: string, current: number) {
-    setEditingId(id);
-    setEditWeight(formatInputForDE(current)); // show comma in edit field
+  function startEdit(e: WeighIn) {
+    setEditingId(e.id);
+    setEditWeight(formatInputForDE(e.weight_kg));
+    setEditHeight(e.height_cm == null ? "" : fmtCm.format(e.height_cm));
     setStatus("");
   }
 
   function cancelEdit() {
     setEditingId(null);
     setEditWeight("");
+    setEditHeight("");
   }
 
   async function saveEdit(id: string) {
@@ -398,16 +591,24 @@ export default function DashboardPage() {
       const w = parseDecimalDE(editWeight);
       if (!Number.isFinite(w) || w <= 0) throw new Error("Gewicht ungültig (z.B. 82,4).");
 
+      const hRaw = editHeight.trim();
+      const h = hRaw ? parseDecimalDE(editHeight) : null;
+      if (hRaw && (!Number.isFinite(h!) || h! <= 0)) {
+        throw new Error("Größe ungültig (z.B. 178 oder 178,5).");
+      }
+
       const { error } = await supabase
         .from("weigh_ins")
-        .update({ weight_kg: w })
+        .update({
+          weight_kg: w,
+          height_cm: hRaw ? h : null,
+        })
         .eq("id", id)
         .eq("person_id", activePersonId);
       if (error) throw error;
 
-      setEditingId(null);
-      setEditWeight("");
-      await loadWeighIns(activePersonId);
+      cancelEdit();
+      await loadAllWeighIns(persons.map((p) => p.id));
     } catch (e: any) {
       setStatus(e?.message ?? String(e));
     } finally {
@@ -429,7 +630,7 @@ export default function DashboardPage() {
         .eq("person_id", activePersonId);
       if (error) throw error;
 
-      await loadWeighIns(activePersonId);
+      await loadAllWeighIns(persons.map((p) => p.id));
     } catch (e: any) {
       setStatus(e?.message ?? String(e));
     } finally {
@@ -437,9 +638,17 @@ export default function DashboardPage() {
     }
   }
 
-  // Kennzahlen
+  const entries = useMemo(
+    () => allEntries.filter((e) => e.person_id === activePersonId),
+    [allEntries, activePersonId]
+  );
+
   const latest = entries[0] ?? null;
   const prevWeek = useMemo(() => findPrevWeekEntry(entries), [entries]);
+  const latestHeight = useMemo(
+    () => entries.find((e) => e.height_cm != null)?.height_cm ?? null,
+    [entries]
+  );
 
   const diffToGoal = useMemo(() => {
     const tw = parseDecimalDE(targetWeight);
@@ -452,35 +661,61 @@ export default function DashboardPage() {
     return latest.weight_kg - prevWeek.weight_kg;
   }, [latest, prevWeek]);
 
-  // Chart paging
-  const maxOffset = Math.max(0, entries.length - CHART_WINDOW);
+  const datesDesc = useMemo(() => {
+    const set = new Set(allEntries.map((e) => e.entry_date));
+    return Array.from(set).sort((a, b) => (a < b ? 1 : -1));
+  }, [allEntries]);
 
+  const maxOffset = Math.max(0, datesDesc.length - CHART_WINDOW);
   const pageCount = useMemo(() => {
-    if (entries.length === 0) return 0;
-    return Math.ceil(entries.length / CHART_WINDOW);
-  }, [entries.length]);
+    if (datesDesc.length === 0) return 0;
+    return Math.ceil(datesDesc.length / CHART_WINDOW);
+  }, [datesDesc.length]);
 
   const currentPage = useMemo(() => {
     return Math.floor(Math.min(chartOffset, maxOffset) / CHART_WINDOW);
   }, [chartOffset, maxOffset]);
 
-  const pageDesc = useMemo(() => {
+  const pageDatesDesc = useMemo(() => {
     const start = Math.min(chartOffset, maxOffset);
-    return entries.slice(start, start + CHART_WINDOW);
-  }, [entries, chartOffset, maxOffset]);
+    return datesDesc.slice(start, start + CHART_WINDOW);
+  }, [datesDesc, chartOffset, maxOffset]);
 
-  const chartData = useMemo(
-    () => pageDesc.slice().reverse().map((e) => ({ date: e.entry_date, weight: e.weight_kg })),
-    [pageDesc]
-  );
+  const weightChartData = useMemo(() => {
+    const datesAsc = pageDatesDesc.slice().reverse();
+    return datesAsc.map((d) => {
+      const row: Record<string, any> = { date: d };
+      for (const p of persons) {
+        const hit = allEntries.find(
+          (e) => e.person_id === p.id && e.entry_date === d
+        );
+        row[`w_${p.id}`] = hit ? hit.weight_kg : null;
+      }
+      return row;
+    });
+  }, [pageDatesDesc, persons, allEntries]);
+
+  const heightChartData = useMemo(() => {
+    const datesAsc = pageDatesDesc.slice().reverse();
+    return datesAsc.map((d) => {
+      const row: Record<string, any> = { date: d };
+      for (const p of persons) {
+        const hit = allEntries.find(
+          (e) => e.person_id === p.id && e.entry_date === d && e.height_cm != null
+        );
+        row[`h_${p.id}`] = hit?.height_cm ?? null;
+      }
+      return row;
+    });
+  }, [pageDatesDesc, persons, allEntries]);
 
   const rangeLabel = useMemo(() => {
-    if (pageDesc.length === 0) return "";
-    const newest = pageDesc[0]?.entry_date;
-    const oldest = pageDesc[pageDesc.length - 1]?.entry_date;
+    if (pageDatesDesc.length === 0) return "";
+    const newest = pageDatesDesc[0];
+    const oldest = pageDatesDesc[pageDatesDesc.length - 1];
     if (!newest || !oldest) return "";
     return `${fmtDateDE(oldest)} – ${fmtDateDE(newest)}`;
-  }, [pageDesc]);
+  }, [pageDatesDesc]);
 
   function goOlder() {
     setChartOffset((o) => Math.min(o + CHART_WINDOW, maxOffset));
@@ -488,13 +723,11 @@ export default function DashboardPage() {
   function goNewer() {
     setChartOffset((o) => Math.max(o - CHART_WINDOW, 0));
   }
-
   function jumpToPage(page: number) {
     const p = Math.max(0, Math.min(page, Math.max(0, pageCount - 1)));
     setChartOffset(p * CHART_WINDOW);
   }
 
-  // iOS-sicherer Pointer-Swipe (Rand ignorieren)
   function canStartSwipe(clientX: number, el: HTMLElement) {
     const r = el.getBoundingClientRect();
     const edge = 28;
@@ -527,11 +760,25 @@ export default function DashboardPage() {
     setSwipeStartTime(null);
   }
 
+  const chartNav = {
+    rangeLabel,
+    pageCount,
+    currentPage,
+    onJump: jumpToPage,
+    onNewer: goNewer,
+    onOlder: goOlder,
+    canNewer: chartOffset > 0,
+    canOlder: chartOffset < maxOffset,
+    onPointerDown,
+    onPointerUp,
+    onPointerCancel,
+  };
+
   return (
     <div className="mx-auto max-w-4xl space-y-6">
       <div>
         <h1 className="text-2xl font-semibold">Dashboard</h1>
-        <div className="text-xs text-zinc-400">Neon Crew · modern chart</div>
+        <div className="text-xs text-zinc-400">Neon Crew · Gewicht & Größe</div>
       </div>
 
       <PersonBar
@@ -544,15 +791,14 @@ export default function DashboardPage() {
         onDelete={handleDeletePerson}
       />
 
-      {/* Eingabe + Ziel + Kennzahlen */}
       <Card className="space-y-4">
         <CardHeader
           title="Eintragen"
-          subtitle="Ein Eintrag pro Tag und Person – Bearbeiten/Löschen jederzeit möglich."
+          subtitle="Für die aktive Person · ein Eintrag pro Tag · Größe optional."
         />
         <Divider />
         <CardBody className="space-y-4">
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-3 items-end">
+          <div className="grid grid-cols-1 md:grid-cols-4 gap-3 items-end">
             <div>
               <div className="text-sm text-zinc-300 mb-1">Datum</div>
               <Input type="date" value={date} onChange={(e) => setDate(e.target.value)} />
@@ -566,9 +812,16 @@ export default function DashboardPage() {
                 inputMode="decimal"
                 placeholder="z.B. 82,4"
               />
-              <div className="mt-1 text-[11px] text-zinc-500">
-                Tipp: Komma oder Punkt geht (82,4 / 82.4)
-              </div>
+            </div>
+
+            <div>
+              <div className="text-sm text-zinc-300 mb-1">Größe (cm)</div>
+              <Input
+                value={height}
+                onChange={(e) => setHeight(e.target.value)}
+                inputMode="decimal"
+                placeholder="z.B. 178"
+              />
             </div>
 
             <Button
@@ -601,13 +854,22 @@ export default function DashboardPage() {
             </Button>
           </div>
 
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+          <div className="grid grid-cols-1 md:grid-cols-4 gap-3">
             <div className="rounded-2xl border border-white/10 bg-black/25 p-4">
-              <div className="text-xs text-zinc-400">Letzter Eintrag</div>
+              <div className="text-xs text-zinc-400">Letztes Gewicht</div>
               <div className="text-lg font-semibold">
                 {latest ? `${fmtKg.format(latest.weight_kg)} kg` : "—"}
               </div>
-              <div className="text-xs text-zinc-500">{latest ? fmtDateDE(latest.entry_date) : ""}</div>
+              <div className="text-xs text-zinc-500">
+                {latest ? fmtDateDE(latest.entry_date) : ""}
+              </div>
+            </div>
+
+            <div className="rounded-2xl border border-white/10 bg-black/25 p-4">
+              <div className="text-xs text-zinc-400">Letzte Größe</div>
+              <div className="text-lg font-semibold">
+                {latestHeight != null ? `${fmtCm.format(latestHeight)} cm` : "—"}
+              </div>
             </div>
 
             <div className="rounded-2xl border border-white/10 bg-black/25 p-4">
@@ -639,130 +901,43 @@ export default function DashboardPage() {
         </CardBody>
       </Card>
 
-      {/* Chart */}
+      <MultiPersonChart
+        title="Gewichts-Diagramm"
+        subtitle="Alle Personen · kg"
+        chartData={weightChartData}
+        persons={persons}
+        dataPrefix="w_"
+        unit="kg"
+        {...chartNav}
+      />
+
+      <MultiPersonChart
+        title="Größen-Diagramm"
+        subtitle="Alle Personen · cm"
+        chartData={heightChartData}
+        persons={persons}
+        dataPrefix="h_"
+        unit="cm"
+        {...chartNav}
+      />
+
       <Card>
         <CardHeader
-          title="Gewichts-Diagramm"
-          subtitle="Modern · Area + Neon Gradient · Swipe/Timeline"
-          right={
-            <div className="flex gap-2">
-              <Button onClick={goNewer} disabled={chartOffset === 0}>
-                Neuer
-              </Button>
-              <Button onClick={goOlder} disabled={chartOffset >= maxOffset}>
-                Älter
-              </Button>
-            </div>
-          }
+          title="Einträge (aktive Person)"
+          subtitle="Neueste zuerst. Gewicht und Größe bearbeiten/löschen."
         />
-        <Divider />
-        <CardBody>
-          <div className="flex items-center justify-between gap-3">
-            <div className="text-xs text-zinc-400">{rangeLabel || "—"}</div>
-            {pageCount > 1 ? (
-              <div className="text-xs text-zinc-500">
-                Seite {currentPage + 1}/{pageCount}
-              </div>
-            ) : null}
-          </div>
-
-          <MiniTimeline pageCount={pageCount} currentPage={currentPage} onJump={jumpToPage} />
-
-          <div
-            className="mt-3 rounded-2xl border border-white/10 bg-black/20 p-2"
-            style={{
-              width: "100%",
-              height: 360,
-              minWidth: 0,
-              touchAction: "pan-y",
-              userSelect: "none",
-              WebkitUserSelect: "none",
-            }}
-            onPointerDown={onPointerDown}
-            onPointerUp={onPointerUp}
-            onPointerCancel={onPointerCancel}
-          >
-            <ResponsiveContainer>
-              <AreaChart data={chartData} margin={{ top: 10, right: 18, left: 0, bottom: 0 }}>
-                <defs>
-                  <linearGradient id="neonFill" x1="0" y1="0" x2="0" y2="1">
-                    <stop offset="0%" stopColor="rgba(236,72,153,0.35)" />
-                    <stop offset="65%" stopColor="rgba(236,72,153,0.10)" />
-                    <stop offset="100%" stopColor="rgba(236,72,153,0.00)" />
-                  </linearGradient>
-
-                  <linearGradient id="neonStroke" x1="0" y1="0" x2="1" y2="0">
-                    <stop offset="0%" stopColor="rgba(34,211,238,0.95)" />
-                    <stop offset="50%" stopColor="rgba(236,72,153,0.95)" />
-                    <stop offset="100%" stopColor="rgba(16,185,129,0.95)" />
-                  </linearGradient>
-                </defs>
-
-                <CartesianGrid stroke="rgba(255,255,255,0.06)" vertical={false} />
-                <XAxis
-                  dataKey="date"
-                  tickFormatter={(v) => String(v).slice(5)}
-                  tick={{ fill: "rgba(255,255,255,0.55)", fontSize: 12 }}
-                  axisLine={{ stroke: "rgba(255,255,255,0.10)" }}
-                  tickLine={false}
-                />
-                <YAxis
-                  domain={["auto", "auto"]}
-                  tick={{ fill: "rgba(255,255,255,0.55)", fontSize: 12 }}
-                  axisLine={false}
-                  tickLine={false}
-                  width={38}
-                />
-                <Tooltip content={<ModernTooltip />} />
-
-                <Area
-                  type="monotone"
-                  dataKey="weight"
-                  stroke="url(#neonStroke)"
-                  strokeWidth={3}
-                  fill="url(#neonFill)"
-                  fillOpacity={1}
-                  dot={false}
-                  activeDot={{
-                    r: 5,
-                    strokeWidth: 2,
-                    stroke: "rgba(255,255,255,0.75)",
-                    fill: "rgba(236,72,153,0.95)",
-                  }}
-                />
-
-                <Line
-                  type="monotone"
-                  dataKey="weight"
-                  stroke="rgba(255,255,255,0.22)"
-                  strokeWidth={1}
-                  dot={false}
-                  activeDot={false}
-                />
-              </AreaChart>
-            </ResponsiveContainer>
-          </div>
-
-          <div className="mt-2 text-xs text-zinc-400">
-            Tipp: Im Diagramm links/rechts wischen (Rand wird ignoriert).
-          </div>
-        </CardBody>
-      </Card>
-
-      {/* Tabelle */}
-      <Card>
-        <CardHeader title="Einträge (alle)" subtitle="Neueste zuerst. Direkt bearbeiten/löschen." />
         <Divider />
         <CardBody>
           {entries.length === 0 ? (
             <div className="text-sm text-zinc-400">Keine Einträge.</div>
           ) : (
             <div className="overflow-x-auto">
-              <table className="w-full min-w-[520px] border-collapse">
+              <table className="w-full min-w-[560px] border-collapse">
                 <thead>
                   <tr className="text-left text-sm text-zinc-300">
                     <th className="py-2">Datum</th>
                     <th className="py-2">kg</th>
+                    <th className="py-2">cm</th>
                     <th className="py-2">Aktion</th>
                   </tr>
                 </thead>
@@ -775,12 +950,26 @@ export default function DashboardPage() {
                           <Input
                             value={editWeight}
                             onChange={(ev) => setEditWeight(ev.target.value)}
-                            className="w-28"
+                            className="w-24"
                             inputMode="decimal"
-                            placeholder="z.B. 82,4"
                           />
                         ) : (
                           fmtKg.format(e.weight_kg)
+                        )}
+                      </td>
+                      <td className="py-3 text-sm text-zinc-200">
+                        {editingId === e.id ? (
+                          <Input
+                            value={editHeight}
+                            onChange={(ev) => setEditHeight(ev.target.value)}
+                            className="w-24"
+                            inputMode="decimal"
+                            placeholder="—"
+                          />
+                        ) : e.height_cm != null ? (
+                          fmtCm.format(e.height_cm)
+                        ) : (
+                          "—"
                         )}
                       </td>
                       <td className="py-3">
@@ -795,10 +984,14 @@ export default function DashboardPage() {
                           </div>
                         ) : (
                           <div className="flex gap-2 flex-wrap">
-                            <Button onClick={() => startEdit(e.id, e.weight_kg)} disabled={busy}>
+                            <Button onClick={() => startEdit(e)} disabled={busy}>
                               Bearbeiten
                             </Button>
-                            <Button onClick={() => deleteEntry(e.id)} disabled={busy} variant="danger">
+                            <Button
+                              onClick={() => deleteEntry(e.id)}
+                              disabled={busy}
+                              variant="danger"
+                            >
                               Löschen
                             </Button>
                           </div>
