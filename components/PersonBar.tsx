@@ -29,14 +29,18 @@ export default function PersonBar({
   const [renaming, setRenaming] = useState(false);
   const [renameValue, setRenameValue] = useState("");
   const [localBusy, setLocalBusy] = useState(false);
+  const [error, setError] = useState<string>("");
 
   const active = persons.find((p) => p.id === activeId) ?? null;
   const canDelete = persons.length > 1 && !!activeId;
 
   async function wrap(fn: () => Promise<void>) {
     try {
+      setError("");
       setLocalBusy(true);
       await fn();
+    } catch (e: any) {
+      setError(e?.message ?? String(e));
     } finally {
       setLocalBusy(false);
     }
@@ -69,6 +73,7 @@ export default function PersonBar({
             type="button"
             disabled={busy || localBusy || !active}
             onClick={() => {
+              setError("");
               setRenaming((v) => !v);
               setRenameValue(active?.display_name ?? "");
             }}
@@ -129,6 +134,16 @@ export default function PersonBar({
             value={newName}
             onChange={(e) => setNewName(e.target.value)}
             placeholder="z.B. Partner"
+            onKeyDown={(e) => {
+              if (e.key === "Enter") {
+                e.preventDefault();
+                if (!newName.trim() || busy || localBusy) return;
+                void wrap(async () => {
+                  await onCreate(newName);
+                  setNewName("");
+                });
+              }
+            }}
           />
         </div>
         <Button
@@ -142,9 +157,15 @@ export default function PersonBar({
             })
           }
         >
-          Anlegen
+          {localBusy ? "…" : "Anlegen"}
         </Button>
       </div>
+
+      {error ? (
+        <div className="rounded-xl border border-red-400/30 bg-red-500/10 px-3 py-2 text-sm text-red-100">
+          {error}
+        </div>
+      ) : null}
     </div>
   );
 }

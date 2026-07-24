@@ -114,7 +114,21 @@ export async function createPerson(ownerUserId: string, displayName: string): Pr
     .select("id, owner_user_id, display_name, target_weight_kg")
     .single();
 
-  if (error) throw error;
+  if (error) {
+    const msg = error.message || String(error);
+    if (/row-level security|RLS|policy/i.test(msg)) {
+      throw new Error(
+        "Anlegen blockiert (RLS). Bitte supabase/fix_persons_rls.sql im SQL Editor ausführen."
+      );
+    }
+    if (error.code === "42P01" || /persons/i.test(msg) && /does not exist/i.test(msg)) {
+      throw new Error(
+        "Tabelle „persons“ fehlt. Bitte supabase/migration_persons.sql ausführen."
+      );
+    }
+    throw new Error(msg);
+  }
+  if (!data) throw new Error("Person wurde nicht angelegt (keine Daten zurück).");
   return mapPerson(data);
 }
 
