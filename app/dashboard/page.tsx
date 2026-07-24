@@ -8,9 +8,9 @@ import {
   YAxis,
   Tooltip,
   CartesianGrid,
+  Area,
+  AreaChart,
   Line,
-  LineChart,
-  Legend,
 } from "recharts";
 
 import { Card, CardHeader, CardBody, Divider } from "@/components/ui/Card";
@@ -36,17 +36,6 @@ type WeighIn = {
   weight_kg: number;
   height_cm: number | null;
 };
-
-const PERSON_COLORS = [
-  "#ec4899",
-  "#22d3ee",
-  "#34d399",
-  "#fbbf24",
-  "#a78bfa",
-  "#fb7185",
-  "#38bdf8",
-  "#4ade80",
-];
 
 function todayISO() {
   const d = new Date();
@@ -167,56 +156,37 @@ function MiniTimeline({
   );
 }
 
-function MultiTooltip({
+function SimpleTooltip({
   active,
   payload,
   label,
   unit,
-  nameByKey,
 }: {
   active?: boolean;
   payload?: any[];
   label?: string;
-  unit: string;
-  nameByKey: Record<string, string>;
+  unit: "kg" | "cm";
 }) {
   if (!active || !payload?.length) return null;
+  const n = Number(payload[0]?.value);
+  const formatted = unit === "kg" ? fmtKg.format(n) : fmtCm.format(n);
   return (
     <div
       className="rounded-2xl border border-white/10 bg-black/70 px-3 py-2 text-sm text-zinc-100"
       style={{ backdropFilter: "blur(8px)" }}
     >
       <div className="text-xs text-zinc-400 mb-1">{fmtDateDE(String(label))}</div>
-      <div className="space-y-1">
-        {payload.map((p) => {
-          const n = Number(p.value);
-          if (!Number.isFinite(n)) return null;
-          const name = nameByKey[p.dataKey] ?? p.dataKey;
-          const formatted = unit === "kg" ? fmtKg.format(n) : fmtCm.format(n);
-          return (
-            <div key={p.dataKey} className="flex items-center gap-2">
-              <span
-                className="inline-block h-2 w-2 rounded-full"
-                style={{ background: p.color }}
-              />
-              <span className="text-zinc-300">{name}:</span>
-              <span className="font-semibold">
-                {formatted} {unit}
-              </span>
-            </div>
-          );
-        })}
+      <div className="font-semibold">
+        {Number.isFinite(n) ? `${formatted} ${unit}` : "—"}
       </div>
     </div>
   );
 }
 
-function MultiPersonChart({
+function PersonChart({
   title,
   subtitle,
   chartData,
-  persons,
-  dataPrefix,
   unit,
   rangeLabel,
   pageCount,
@@ -232,9 +202,7 @@ function MultiPersonChart({
 }: {
   title: string;
   subtitle: string;
-  chartData: Record<string, any>[];
-  persons: Person[];
-  dataPrefix: "w_" | "h_";
+  chartData: { date: string; value: number | null }[];
   unit: "kg" | "cm";
   rangeLabel: string;
   pageCount: number;
@@ -248,11 +216,9 @@ function MultiPersonChart({
   onPointerUp: (e: React.PointerEvent<HTMLDivElement>) => void;
   onPointerCancel: () => void;
 }) {
-  const nameByKey = useMemo(() => {
-    const m: Record<string, string> = {};
-    for (const p of persons) m[`${dataPrefix}${p.id}`] = p.display_name;
-    return m;
-  }, [persons, dataPrefix]);
+  const stroke =
+    unit === "kg" ? "rgba(236,72,153,0.95)" : "rgba(34,211,238,0.95)";
+  const fillId = unit === "kg" ? "fillKg" : "fillCm";
 
   return (
     <Card>
@@ -303,7 +269,13 @@ function MultiPersonChart({
             </div>
           ) : (
             <ResponsiveContainer>
-              <LineChart data={chartData} margin={{ top: 10, right: 18, left: 0, bottom: 0 }}>
+              <AreaChart data={chartData} margin={{ top: 10, right: 18, left: 0, bottom: 0 }}>
+                <defs>
+                  <linearGradient id={fillId} x1="0" y1="0" x2="0" y2="1">
+                    <stop offset="0%" stopColor={stroke} stopOpacity={0.35} />
+                    <stop offset="100%" stopColor={stroke} stopOpacity={0} />
+                  </linearGradient>
+                </defs>
                 <CartesianGrid stroke="rgba(255,255,255,0.06)" vertical={false} />
                 <XAxis
                   dataKey="date"
@@ -319,35 +291,33 @@ function MultiPersonChart({
                   tickLine={false}
                   width={42}
                 />
-                <Tooltip
-                  content={
-                    <MultiTooltip unit={unit} nameByKey={nameByKey} />
-                  }
+                <Tooltip content={<SimpleTooltip unit={unit} />} />
+                <Area
+                  type="monotone"
+                  dataKey="value"
+                  stroke={stroke}
+                  strokeWidth={3}
+                  fill={`url(#${fillId})`}
+                  connectNulls
+                  dot={{ r: 3 }}
+                  activeDot={{ r: 5 }}
                 />
-                <Legend
-                  wrapperStyle={{ color: "rgba(255,255,255,0.7)", fontSize: 12 }}
-                  formatter={(value) => nameByKey[String(value)] ?? value}
+                <Line
+                  type="monotone"
+                  dataKey="value"
+                  stroke="rgba(255,255,255,0.2)"
+                  strokeWidth={1}
+                  dot={false}
+                  activeDot={false}
+                  connectNulls
                 />
-                {persons.map((p, idx) => (
-                  <Line
-                    key={p.id}
-                    type="monotone"
-                    dataKey={`${dataPrefix}${p.id}`}
-                    name={`${dataPrefix}${p.id}`}
-                    stroke={PERSON_COLORS[idx % PERSON_COLORS.length]}
-                    strokeWidth={2.5}
-                    dot={{ r: 3 }}
-                    connectNulls
-                    activeDot={{ r: 5 }}
-                  />
-                ))}
-              </LineChart>
+              </AreaChart>
             </ResponsiveContainer>
           )}
         </div>
 
         <div className="mt-2 text-xs text-zinc-400">
-          Alle Personen in einem Diagramm · links/rechts wischen zum Blättern.
+          Nur aktive Person · links/rechts wischen zum Blättern.
         </div>
       </CardBody>
     </Card>
@@ -461,6 +431,7 @@ export default function DashboardPage() {
     setEditingId(null);
     setEditWeight("");
     setEditHeight("");
+    setChartOffset(0);
   }
 
   async function handleCreatePerson(name: string) {
@@ -661,10 +632,10 @@ export default function DashboardPage() {
     return latest.weight_kg - prevWeek.weight_kg;
   }, [latest, prevWeek]);
 
-  const datesDesc = useMemo(() => {
-    const set = new Set(allEntries.map((e) => e.entry_date));
-    return Array.from(set).sort((a, b) => (a < b ? 1 : -1));
-  }, [allEntries]);
+  const datesDesc = useMemo(
+    () => entries.map((e) => e.entry_date),
+    [entries]
+  );
 
   const maxOffset = Math.max(0, datesDesc.length - CHART_WINDOW);
   const pageCount = useMemo(() => {
@@ -676,46 +647,40 @@ export default function DashboardPage() {
     return Math.floor(Math.min(chartOffset, maxOffset) / CHART_WINDOW);
   }, [chartOffset, maxOffset]);
 
-  const pageDatesDesc = useMemo(() => {
+  const pageDesc = useMemo(() => {
     const start = Math.min(chartOffset, maxOffset);
-    return datesDesc.slice(start, start + CHART_WINDOW);
-  }, [datesDesc, chartOffset, maxOffset]);
+    return entries.slice(start, start + CHART_WINDOW);
+  }, [entries, chartOffset, maxOffset]);
 
-  const weightChartData = useMemo(() => {
-    const datesAsc = pageDatesDesc.slice().reverse();
-    return datesAsc.map((d) => {
-      const row: Record<string, any> = { date: d };
-      for (const p of persons) {
-        const hit = allEntries.find(
-          (e) => e.person_id === p.id && e.entry_date === d
-        );
-        row[`w_${p.id}`] = hit ? hit.weight_kg : null;
-      }
-      return row;
-    });
-  }, [pageDatesDesc, persons, allEntries]);
+  const weightChartData = useMemo(
+    () =>
+      pageDesc
+        .slice()
+        .reverse()
+        .map((e) => ({ date: e.entry_date, value: e.weight_kg })),
+    [pageDesc]
+  );
 
-  const heightChartData = useMemo(() => {
-    const datesAsc = pageDatesDesc.slice().reverse();
-    return datesAsc.map((d) => {
-      const row: Record<string, any> = { date: d };
-      for (const p of persons) {
-        const hit = allEntries.find(
-          (e) => e.person_id === p.id && e.entry_date === d && e.height_cm != null
-        );
-        row[`h_${p.id}`] = hit?.height_cm ?? null;
-      }
-      return row;
-    });
-  }, [pageDatesDesc, persons, allEntries]);
+  const heightChartData = useMemo(
+    () =>
+      pageDesc
+        .slice()
+        .reverse()
+        .map((e) => ({
+          date: e.entry_date,
+          value: e.height_cm,
+        }))
+        .filter((r) => r.value != null) as { date: string; value: number }[],
+    [pageDesc]
+  );
 
   const rangeLabel = useMemo(() => {
-    if (pageDatesDesc.length === 0) return "";
-    const newest = pageDatesDesc[0];
-    const oldest = pageDatesDesc[pageDatesDesc.length - 1];
+    if (pageDesc.length === 0) return "";
+    const newest = pageDesc[0]?.entry_date;
+    const oldest = pageDesc[pageDesc.length - 1]?.entry_date;
     if (!newest || !oldest) return "";
     return `${fmtDateDE(oldest)} – ${fmtDateDE(newest)}`;
-  }, [pageDatesDesc]);
+  }, [pageDesc]);
 
   function goOlder() {
     setChartOffset((o) => Math.min(o + CHART_WINDOW, maxOffset));
@@ -901,22 +866,18 @@ export default function DashboardPage() {
         </CardBody>
       </Card>
 
-      <MultiPersonChart
+      <PersonChart
         title="Gewichts-Diagramm"
-        subtitle="Alle Personen · kg"
+        subtitle="Aktive Person · kg"
         chartData={weightChartData}
-        persons={persons}
-        dataPrefix="w_"
         unit="kg"
         {...chartNav}
       />
 
-      <MultiPersonChart
+      <PersonChart
         title="Größen-Diagramm"
-        subtitle="Alle Personen · cm"
+        subtitle="Aktive Person · cm"
         chartData={heightChartData}
-        persons={persons}
-        dataPrefix="h_"
         unit="cm"
         {...chartNav}
       />
