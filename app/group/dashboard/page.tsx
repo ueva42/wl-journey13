@@ -21,31 +21,10 @@ type Group = {
   name: string;
   code: string;
   owner_id: string;
-  potato_cycle_start?: string | null;
 };
 
 type Member = { user_id: string; display_name: string; avatar_url?: string | null };
 type WeighIn = { id: string; user_id: string; entry_date: string; weight_kg: number };
-
-// potato_rules: bei dir passt "title" (siehe Screenshot), aber wir mappen robust
-type PotatoRule = {
-  id: string;
-  group_id: string;
-  label: string;
-  points: number;
-  active: boolean;
-};
-
-// potato_events: echte Spalten bei dir: occurred_on + points
-type PotatoEvent = {
-  id: string;
-  user_id: string;
-  group_id: string;
-  rule_id: string;
-  occurred_on: string; // YYYY-MM-DD
-  points: number;
-  note?: string | null;
-};
 
 function fmtDateDE(iso: string) {
   const [y, m, d] = iso.split("-");
@@ -68,57 +47,6 @@ function colorForIndex(i: number) {
   const hue = (i * 57) % 360;
   return `hsl(${hue} 85% 62%)`;
 }
-function todayISO() {
-  const d = new Date();
-  const yyyy = d.getFullYear();
-  const mm = String(d.getMonth() + 1).padStart(2, "0");
-  const dd = String(d.getDate()).padStart(2, "0");
-  return `${yyyy}-${mm}-${dd}`;
-}
-
-// ---- HARTE REGEL: Woche ist immer Montag–Sonntag ----
-function weekStartISO(dateISO: string) {
-  const d = new Date(dateISO + "T00:00:00");
-  const day = d.getDay(); // 0=So,1=Mo,...6=Sa
-  const diff = day === 0 ? 6 : day - 1; // seit Montag
-  d.setDate(d.getDate() - diff);
-  return d.toISOString().slice(0, 10);
-}
-function addDaysISO(dateISO: string, days: number) {
-  const d = new Date(dateISO + "T00:00:00");
-  d.setDate(d.getDate() + days);
-  return d.toISOString().slice(0, 10);
-}
-function diffDays(aISO: string, bISO: string) {
-  const a = new Date(aISO + "T00:00:00").getTime();
-  const b = new Date(bISO + "T00:00:00").getTime();
-  return Math.round((a - b) / (1000 * 60 * 60 * 24));
-}
-
-// ---- Zyklus: Start fix + 12 Wochen, dann Reset ----
-const DEFAULT_CYCLE_START = "2026-01-05"; // Montag
-const CYCLE_WEEKS = 12;
-const CYCLE_DAYS = CYCLE_WEEKS * 7;
-
-function cycleStartForDate(dateISO: string, fixedStartISO: string) {
-  const ws = weekStartISO(dateISO);
-  const start = weekStartISO(fixedStartISO);
-  const delta = diffDays(ws, start);
-  if (delta < 0) return start;
-
-  const weeksSinceStart = Math.floor(delta / 7);
-  const cyclesSinceStart = Math.floor(weeksSinceStart / CYCLE_WEEKS);
-  return addDaysISO(start, cyclesSinceStart * CYCLE_DAYS);
-}
-
-function weekNoInCycle(dateISO: string, cycleStartISO: string) {
-  const ws = weekStartISO(dateISO);
-  const delta = diffDays(ws, cycleStartISO);
-  if (delta < 0) return 1;
-  const weeks = Math.floor(delta / 7);
-  return (weeks % CYCLE_WEEKS) + 1; // 1..12
-}
-
 // ---- Avatar helpers ----
 function parseAvatarPathFromPublicUrl(url: string) {
   const marker = "/avatars/";
@@ -219,14 +147,6 @@ export default function GroupDashboardPage() {
   const [members, setMembers] = useState<Member[]>([]);
   const [weighIns, setWeighIns] = useState<WeighIn[]>([]);
 
-  // Kartoffel
-  const [potatoRules, setPotatoRules] = useState<PotatoRule[]>([]);
-  const [potatoEvents, setPotatoEvents] = useState<PotatoEvent[]>([]);
-  const [potatoRuleId, setPotatoRuleId] = useState<string>("");
-  const [potatoDate, setPotatoDate] = useState<string>(todayISO());
-  const [potatoBusy, setPotatoBusy] = useState(false);
-  const [rulesHint, setRulesHint] = useState<string>("");
-
   // Chart Paging
   const CHART_WINDOW = 10;
   const [chartOffset, setChartOffset] = useState(0);
@@ -240,27 +160,10 @@ export default function GroupDashboardPage() {
   const [uploading, setUploading] = useState(false);
   const [deletingAvatar, setDeletingAvatar] = useState(false);
 
-  // Zyklus Start/Ende
-  const cycleFixedStart = useMemo(() => {
-    const fromDb = group?.potato_cycle_start ? weekStartISO(group.potato_cycle_start) : null;
-    return fromDb ?? DEFAULT_CYCLE_START;
-  }, [group]);
-
-  const cycleStart = useMemo(() => cycleStartForDate(todayISO(), cycleFixedStart), [cycleFixedStart]);
-  const cycleEnd = useMemo(() => addDaysISO(cycleStart, CYCLE_DAYS - 1), [cycleStart]);
-
-  const currentWeekNo = useMemo(() => weekNoInCycle(todayISO(), cycleStart), [cycleStart]);
-  const currentWeekStart = useMemo(
-    () => addDaysISO(cycleStart, (currentWeekNo - 1) * 7),
-    [cycleStart, currentWeekNo]
-  );
-  const currentWeekEnd = useMemo(() => addDaysISO(currentWeekStart, 6), [currentWeekStart]);
-
   useEffect(() => {
     (async () => {
       try {
         setStatus("");
-        setRulesHint("");
         setLoading(true);
 
         const { data: u } = await supabase.auth.getUser();
@@ -282,8 +185,6 @@ export default function GroupDashboardPage() {
           setGroup(null);
           setMembers([]);
           setWeighIns([]);
-          setPotatoRules([]);
-          setPotatoEvents([]);
           setStatus("Du bist aktuell in keiner aktiven Gruppe.");
           return;
         }
@@ -303,7 +204,6 @@ export default function GroupDashboardPage() {
           name: gRaw.name,
           code: gRaw.code,
           owner_id: gRaw.owner_id,
-          potato_cycle_start: gRaw.potato_cycle_start ?? null,
         };
         setGroup(g);
 
@@ -318,8 +218,6 @@ export default function GroupDashboardPage() {
         if (ids.length === 0) {
           setMembers([]);
           setWeighIns([]);
-          setPotatoRules([]);
-          setPotatoEvents([]);
           return;
         }
 
@@ -363,57 +261,7 @@ export default function GroupDashboardPage() {
           }))
         );
 
-        // potato_rules: bei dir ist "title" da – wir lesen * und mappen robust
-        const { data: rulesRaw, error: rErr } = await supabase
-          .from("potato_rules")
-          .select("*")
-          .eq("group_id", groupId)
-          .eq("active", true)
-          .order("points", { ascending: false });
-
-        if (rErr) {
-          setPotatoRules([]);
-          setPotatoRuleId("");
-          setRulesHint(`Regeln konnten nicht geladen werden: ${rErr.message}`);
-        } else {
-          const rulesList: PotatoRule[] = (rulesRaw ?? []).map((x: any) => ({
-            id: x.id,
-            group_id: x.group_id,
-            label: (x.title ?? x.label ?? x.name ?? x.rule ?? x.text ?? x.description ?? "Regel") as string,
-            points: Number(x.points ?? 0),
-            active: !!x.active,
-          }));
-          setPotatoRules(rulesList);
-          setPotatoRuleId(rulesList[0]?.id ?? "");
-          setRulesHint(rulesList.length === 0 ? "Keine aktiven Regeln gefunden." : "");
-        }
-
-        // potato_events: KORREKT occurred_on + points
-        const { data: evRaw, error: eErr } = await supabase
-          .from("potato_events")
-          .select("id, group_id, user_id, rule_id, occurred_on, points, note")
-          .eq("group_id", groupId)
-          .gte("occurred_on", cycleStart)
-          .lte("occurred_on", cycleEnd)
-          .order("occurred_on", { ascending: false })
-          .limit(5000);
-
-        if (eErr) throw eErr;
-
-        setPotatoEvents(
-          (evRaw ?? []).map((x: any) => ({
-            id: x.id,
-            group_id: x.group_id,
-            user_id: x.user_id,
-            rule_id: x.rule_id,
-            occurred_on: x.occurred_on,
-            points: Number(x.points ?? 0),
-            note: x.note ?? null,
-          }))
-        );
-
         setChartOffset(0);
-        setPotatoDate(todayISO());
       } catch (e: any) {
         setStatus(e?.message ?? String(e));
       } finally {
@@ -421,7 +269,7 @@ export default function GroupDashboardPage() {
       }
     })();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [cycleStart, cycleEnd]);
+  }, []);
 
   // ---- Letzter Eintrag je Nutzer (für Box über Chart) ----
   const latestWeighInByUser = useMemo(() => {
@@ -632,124 +480,6 @@ export default function GroupDashboardPage() {
     }
   }
 
-  // ---- Kartoffel: Mapping + Summen ----
-  const ruleById = useMemo(() => {
-    const m = new Map<string, PotatoRule>();
-    for (const r of potatoRules) m.set(r.id, r);
-    return m;
-  }, [potatoRules]);
-
-  const activeMemberEvents = useMemo(() => {
-    if (!activeMember) return [];
-    return potatoEvents
-      .filter((e) => e.user_id === activeMember.user_id)
-      .sort((a, b) => (a.occurred_on < b.occurred_on ? 1 : -1));
-  }, [potatoEvents, activeMember]);
-
-  const pointsByWeekNo = useMemo(() => {
-    const map = new Map<number, number>();
-    for (const e of activeMemberEvents) {
-      const wno = weekNoInCycle(e.occurred_on, cycleStart);
-      map.set(wno, (map.get(wno) ?? 0) + (Number(e.points) || 0));
-    }
-    return map;
-  }, [activeMemberEvents, cycleStart]);
-
-  const pointsCurrentWeek = useMemo(
-    () => pointsByWeekNo.get(currentWeekNo) ?? 0,
-    [pointsByWeekNo, currentWeekNo]
-  );
-
-  const weekly12Rows = useMemo(() => {
-    const rows = [];
-    for (let i = 1; i <= 12; i++) {
-      const ws = addDaysISO(cycleStart, (i - 1) * 7); // Montag
-      const we = addDaysISO(ws, 6); // Sonntag
-      rows.push({
-        weekNo: i,
-        weekStart: ws,
-        weekEnd: we,
-        points: pointsByWeekNo.get(i) ?? 0,
-      });
-    }
-    return rows;
-  }, [cycleStart, pointsByWeekNo]);
-
-  const points12Total = useMemo(
-    () => weekly12Rows.reduce((sum, r) => sum + r.points, 0),
-    [weekly12Rows]
-  );
-
-  const currentWeekEvents = useMemo(() => {
-    return activeMemberEvents
-      .filter((e) => e.occurred_on >= currentWeekStart && e.occurred_on <= currentWeekEnd)
-      .sort((a, b) => (a.occurred_on < b.occurred_on ? 1 : -1));
-  }, [activeMemberEvents, currentWeekStart, currentWeekEnd]);
-
-  async function addPotatoEventForMe() {
-    if (!group?.id) return;
-    if (!myUserId) return;
-    if (!activeMember || activeMember.user_id !== myUserId) return;
-
-    try {
-      setPotatoBusy(true);
-      setStatus("");
-
-      if (!potatoRuleId) throw new Error("Bitte eine Regel wählen.");
-
-      // Zyklusgrenzen
-      const d = potatoDate;
-      if (d < cycleStart || d > cycleEnd) {
-        throw new Error("Datum liegt nicht im aktuellen 12-Wochen-Zyklus.");
-      }
-
-      // HARTE REGEL: nur aktuelle Woche (Mo–So) eintragen
-      const wno = weekNoInCycle(d, cycleStart);
-      if (wno !== currentWeekNo) {
-        throw new Error("Du kannst hier nur für die aktuelle Woche eintragen (Mo–So).");
-      }
-
-      const rule = ruleById.get(potatoRuleId);
-      const pts = Number(rule?.points ?? 0);
-
-      const payload = {
-        user_id: myUserId,
-        group_id: group.id,
-        rule_id: potatoRuleId,
-        occurred_on: potatoDate,
-        points: pts,
-        note: null as any,
-      };
-
-      const { data, error } = await supabase
-        .from("potato_events")
-        .insert(payload)
-        .select("id, user_id, group_id, rule_id, occurred_on, points, note")
-        .single();
-
-      if (error) throw error;
-
-      setPotatoEvents((prev) => [
-        {
-          id: data.id,
-          user_id: data.user_id,
-          group_id: data.group_id,
-          rule_id: data.rule_id,
-          occurred_on: data.occurred_on,
-          points: Number(data.points ?? 0),
-          note: data.note ?? null,
-        },
-        ...prev,
-      ]);
-
-      setStatus("Punkt eingetragen.");
-    } catch (e: any) {
-      setStatus(e?.message ?? String(e));
-    } finally {
-      setPotatoBusy(false);
-    }
-  }
-
   // ---- Chart “Modern GTA-ish” Styling ----
   const chartWrapStyle: React.CSSProperties = {
     width: "100%",
@@ -774,7 +504,6 @@ export default function GroupDashboardPage() {
               <>
                 Gruppe: <span className="font-semibold">{group.name}</span>{" "}
                 <span className="opacity-60">(Code: {group.code})</span>
-                <span className="opacity-60"> · Zyklus: {cycleStart}–{cycleEnd}</span>
               </>
             ) : (
               "—"
@@ -1042,106 +771,6 @@ export default function GroupDashboardPage() {
                     ))}
                   </div>
                 )}
-              </div>
-            </div>
-
-            {/* Kartoffel */}
-            <div className="rounded-2xl border border-white/10 bg-white/5 p-4 space-y-3">
-              <div className="flex flex-wrap items-end justify-between gap-3">
-                <div>
-                  <div className="text-sm font-semibold">Kartoffel-Punkte (Zyklus)</div>
-                  <div className="text-xs opacity-70">
-                    Aktuelle Woche (Mo–So, Woche {currentWeekNo}):{" "}
-                    <span className="font-semibold">{pointsCurrentWeek}</span> · Zyklus-Summe:{" "}
-                    <span className="font-semibold">{points12Total}</span>
-                  </div>
-                </div>
-
-                {activeMember.user_id === myUserId ? (
-                  <div className="flex flex-wrap gap-2 items-center">
-                    <input
-                      type="date"
-                      value={potatoDate}
-                      onChange={(e) => setPotatoDate(e.target.value)}
-                      className="rounded-xl border border-white/15 bg-black/20 px-3 py-2 text-sm outline-none"
-                      style={{ minWidth: 160 }}
-                    />
-
-                    <select
-                      value={potatoRuleId}
-                      onChange={(e) => setPotatoRuleId(e.target.value)}
-                      className="rounded-xl border border-white/15 bg-black/20 px-3 py-2 text-sm outline-none"
-                      style={{ minWidth: 240 }}
-                    >
-                      {potatoRules.length === 0 ? (
-                        <option value="">Keine Regeln</option>
-                      ) : (
-                        potatoRules.map((r) => (
-                          <option key={r.id} value={r.id}>
-                            {r.label} (+{r.points})
-                          </option>
-                        ))
-                      )}
-                    </select>
-
-                    <button
-                      onClick={addPotatoEventForMe}
-                      disabled={potatoBusy || potatoRules.length === 0 || !potatoRuleId}
-                      className="rounded-xl border border-white/15 px-4 py-2 text-sm hover:bg-white/10 disabled:opacity-50"
-                    >
-                      {potatoBusy ? "…" : "Eintragen"}
-                    </button>
-                  </div>
-                ) : (
-                  <div className="text-xs opacity-60">Eintragen kann nur der Nutzer selbst.</div>
-                )}
-              </div>
-
-              {rulesHint ? (
-                <div className="rounded-xl border border-white/10 bg-white/5 p-3 text-sm">{rulesHint}</div>
-              ) : null}
-
-              <div className="space-y-2">
-                <div className="text-xs font-semibold opacity-80">Aktuelle Woche (Mo–So): Einträge</div>
-                {currentWeekEvents.length === 0 ? (
-                  <div className="text-sm opacity-70">Keine Einträge in dieser Woche.</div>
-                ) : (
-                  <div className="divide-y divide-white/10 rounded-xl border border-white/10 overflow-hidden">
-                    {currentWeekEvents.slice(0, 12).map((e) => {
-                      const rule = ruleById.get(e.rule_id);
-                      const label = rule?.label ?? "Regel";
-                      return (
-                        <div key={e.id} className="flex items-center justify-between p-3">
-                          <div className="text-sm">
-                            {fmtDateDE(e.occurred_on)} · {label}
-                          </div>
-                          <div className="text-sm font-semibold">+{Number(e.points ?? 0)}</div>
-                        </div>
-                      );
-                    })}
-                  </div>
-                )}
-              </div>
-
-              <div className="space-y-2">
-                <div className="text-xs font-semibold opacity-80">Wochen-Summen (Woche 1–12, Mo–So)</div>
-
-                <div className="divide-y divide-white/10 rounded-xl border border-white/10 overflow-hidden">
-                  {weekly12Rows.map((w) => (
-                    <div key={w.weekNo} className="flex items-center justify-between p-3">
-                      <div className="text-sm">
-                        Woche {w.weekNo}
-                        <span className="text-xs opacity-60">
-                          {" "}
-                          ({fmtDateDE(w.weekStart)} – {fmtDateDE(w.weekEnd)})
-                        </span>
-                      </div>
-                      <div className="text-sm font-semibold">{w.points}</div>
-                    </div>
-                  ))}
-                </div>
-
-                <div className="text-xs opacity-70">Nach Woche 12 startet automatisch ein neuer Zyklus.</div>
               </div>
             </div>
 

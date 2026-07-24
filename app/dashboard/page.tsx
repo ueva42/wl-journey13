@@ -16,10 +16,22 @@ import {
 import { Card, CardHeader, CardBody, Divider } from "@/components/ui/Card";
 import { Button } from "@/components/ui/Button";
 import { Input } from "@/components/ui/Input";
+import PersonBar from "@/components/PersonBar";
+import {
+  createPerson,
+  deletePerson,
+  loadOrCreatePersons,
+  pickActivePerson,
+  renamePerson,
+  setStoredActivePersonId,
+  updatePersonTarget,
+  type Person,
+} from "@/lib/persons";
 
 type WeighIn = {
   id: string;
   user_id: string;
+  person_id: string;
   entry_date: string; // YYYY-MM-DD
   weight_kg: number;
 };
@@ -171,6 +183,8 @@ export default function DashboardPage() {
   const [busy, setBusy] = useState(false);
 
   const [myUserId, setMyUserId] = useState<string | null>(null);
+  const [persons, setPersons] = useState<Person[]>([]);
+  const [activePersonId, setActivePersonId] = useState<string | null>(null);
 
   // Eingabe
   const [date, setDate] = useState(todayISO());
@@ -193,6 +207,23 @@ export default function DashboardPage() {
   const [swipeStartX, setSwipeStartX] = useState<number | null>(null);
   const [swipeStartTime, setSwipeStartTime] = useState<number | null>(null);
 
+  function applyActivePerson(list: Person[], preferredId?: string | null) {
+    const active = pickActivePerson(list, preferredId);
+    setPersons(list);
+    setActivePersonId(active?.id ?? null);
+    if (active) {
+      setStoredActivePersonId(active.id);
+      setTargetWeight(
+        active.target_weight_kg == null
+          ? ""
+          : formatInputForDE(Number(active.target_weight_kg))
+      );
+    } else {
+      setTargetWeight("");
+    }
+    return active;
+  }
+
   useEffect(() => {
     (async () => {
       try {
@@ -201,12 +232,15 @@ export default function DashboardPage() {
         const user = u.user;
         if (!user) {
           setMyUserId(null);
+          setPersons([]);
+          setActivePersonId(null);
           setEntries([]);
           return;
         }
         setMyUserId(user.id);
-        await loadTargetWeight(user.id);
-        await loadWeighIns(user.id);
+        const list = await loadOrCreatePersons(user.id);
+        const active = applyActivePerson(list);
+        if (active) await loadWeighIns(active.id);
       } catch (e: any) {
         setStatus(e?.message ?? String(e));
       }
@@ -214,24 +248,11 @@ export default function DashboardPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  async function loadTargetWeight(userId: string) {
-    const { data, error } = await supabase
-      .from("profiles")
-      .select("target_weight_kg")
-      .eq("user_id", userId)
-      .maybeSingle();
-    if (error) throw error;
-
-    // store as DE-formatted string for user editing
-    const tw = data?.target_weight_kg;
-    setTargetWeight(tw == null ? "" : formatInputForDE(Number(tw)));
-  }
-
-  async function loadWeighIns(userId: string) {
+  async function loadWeighIns(personId: string) {
     const { data, error } = await supabase
       .from("weigh_ins")
-      .select("id, user_id, entry_date, weight_kg")
-      .eq("user_id", userId)
+      .select("id, user_id, person_id, entry_date, weight_kg")
+      .eq("person_id", personId)
       .order("entry_date", { ascending: false });
     if (error) throw error;
 
@@ -239,6 +260,7 @@ export default function DashboardPage() {
       (data ?? []).map((x: any) => ({
         id: x.id,
         user_id: x.user_id,
+        person_id: x.person_id,
         entry_date: x.entry_date,
         weight_kg: Number(x.weight_kg),
       }))
@@ -246,21 +268,64 @@ export default function DashboardPage() {
     setChartOffset(0);
   }
 
+  async function selectPerson(id: string) {
+    const active = applyActivePerson(persons, id);
+    setEditingId(null);
+    setEditWeight("");
+    if (active) {
+      try {
+        setStatus("");
+        await loadWeighIns(active.id);
+      } catch (e: any) {
+        setStatus(e?.message ?? String(e));
+      }
+    } else {
+      setEntries([]);
+    }
+  }
+
+  async function handleCreatePerson(name: string) {
+    if (!myUserId) throw new Error("Nicht eingeloggt.");
+    const created = await createPerson(myUserId, name);
+    const list = [...persons, created];
+    const active = applyActivePerson(list, created.id);
+    setEntries([]);
+    if (active) await loadWeighIns(active.id);
+  }
+
+  async function handleRenamePerson(id: string, name: string) {
+    await renamePerson(id, name);
+    const list = persons.map((p) =>
+      p.id === id ? { ...p, display_name: name.trim() } : p
+    );
+    applyActivePerson(list, activePersonId);
+  }
+
+  async function handleDeletePerson(id: string) {
+    await deletePerson(id);
+    const list = persons.filter((p) => p.id !== id);
+    const active = applyActivePerson(list);
+    if (active) await loadWeighIns(active.id);
+    else setEntries([]);
+  }
+
   async function saveTarget() {
     try {
       if (!myUserId) throw new Error("Nicht eingeloggt.");
+      if (!activePersonId) throw new Error("Keine Person gewählt.");
       setSavingTarget(true);
       setStatus("");
 
       const n = parseDecimalDE(targetWeight);
       if (!Number.isFinite(n) || n <= 0) throw new Error("Zielgewicht ungültig (z.B. 78,0).");
 
-      const { error } = await supabase
-        .from("profiles")
-        .update({ target_weight_kg: n })
-        .eq("user_id", myUserId);
-      if (error) throw error;
+      await updatePersonTarget(activePersonId, n);
 
+      setPersons((prev) =>
+        prev.map((p) =>
+          p.id === activePersonId ? { ...p, target_weight_kg: n } : p
+        )
+      );
       setTargetWeight(formatInputForDE(n));
       setStatus("✅ Zielgewicht gespeichert.");
     } catch (e: any) {
@@ -273,6 +338,7 @@ export default function DashboardPage() {
   async function addWeighIn() {
     try {
       if (!myUserId) throw new Error("Nicht eingeloggt.");
+      if (!activePersonId) throw new Error("Keine Person gewählt.");
       setBusy(true);
       setStatus("");
 
@@ -285,7 +351,7 @@ export default function DashboardPage() {
       const { data: existing, error: exErr } = await supabase
         .from("weigh_ins")
         .select("id")
-        .eq("user_id", myUserId)
+        .eq("person_id", activePersonId)
         .eq("entry_date", entryDate)
         .maybeSingle();
       if (exErr) throw exErr;
@@ -296,13 +362,14 @@ export default function DashboardPage() {
 
       const { error } = await supabase.from("weigh_ins").insert({
         user_id: myUserId,
+        person_id: activePersonId,
         entry_date: entryDate,
         weight_kg: w,
       });
       if (error) throw error;
 
       setWeight("");
-      await loadWeighIns(myUserId);
+      await loadWeighIns(activePersonId);
     } catch (e: any) {
       setStatus(e?.message ?? String(e));
     } finally {
@@ -324,6 +391,7 @@ export default function DashboardPage() {
   async function saveEdit(id: string) {
     try {
       if (!myUserId) throw new Error("Nicht eingeloggt.");
+      if (!activePersonId) throw new Error("Keine Person gewählt.");
       setBusy(true);
       setStatus("");
 
@@ -334,12 +402,12 @@ export default function DashboardPage() {
         .from("weigh_ins")
         .update({ weight_kg: w })
         .eq("id", id)
-        .eq("user_id", myUserId);
+        .eq("person_id", activePersonId);
       if (error) throw error;
 
       setEditingId(null);
       setEditWeight("");
-      await loadWeighIns(myUserId);
+      await loadWeighIns(activePersonId);
     } catch (e: any) {
       setStatus(e?.message ?? String(e));
     } finally {
@@ -350,6 +418,7 @@ export default function DashboardPage() {
   async function deleteEntry(id: string) {
     try {
       if (!myUserId) throw new Error("Nicht eingeloggt.");
+      if (!activePersonId) throw new Error("Keine Person gewählt.");
       setBusy(true);
       setStatus("");
 
@@ -357,10 +426,10 @@ export default function DashboardPage() {
         .from("weigh_ins")
         .delete()
         .eq("id", id)
-        .eq("user_id", myUserId);
+        .eq("person_id", activePersonId);
       if (error) throw error;
 
-      await loadWeighIns(myUserId);
+      await loadWeighIns(activePersonId);
     } catch (e: any) {
       setStatus(e?.message ?? String(e));
     } finally {
@@ -465,11 +534,21 @@ export default function DashboardPage() {
         <div className="text-xs text-zinc-400">Neon Crew · modern chart</div>
       </div>
 
+      <PersonBar
+        persons={persons}
+        activeId={activePersonId}
+        busy={busy}
+        onSelect={(id) => void selectPerson(id)}
+        onCreate={handleCreatePerson}
+        onRename={handleRenamePerson}
+        onDelete={handleDeletePerson}
+      />
+
       {/* Eingabe + Ziel + Kennzahlen */}
       <Card className="space-y-4">
         <CardHeader
           title="Eintragen"
-          subtitle="Ein Eintrag pro Tag – Bearbeiten/Löschen jederzeit möglich."
+          subtitle="Ein Eintrag pro Tag und Person – Bearbeiten/Löschen jederzeit möglich."
         />
         <Divider />
         <CardBody className="space-y-4">
@@ -492,7 +571,12 @@ export default function DashboardPage() {
               </div>
             </div>
 
-            <Button onClick={addWeighIn} disabled={busy || !myUserId} variant="solid" className="w-full">
+            <Button
+              onClick={addWeighIn}
+              disabled={busy || !myUserId || !activePersonId}
+              variant="solid"
+              className="w-full"
+            >
               {busy ? "…" : "Eintragen"}
             </Button>
           </div>
@@ -508,7 +592,11 @@ export default function DashboardPage() {
               />
             </div>
 
-            <Button onClick={saveTarget} disabled={savingTarget || !myUserId} className="w-full">
+            <Button
+              onClick={saveTarget}
+              disabled={savingTarget || !myUserId || !activePersonId}
+              className="w-full"
+            >
               {savingTarget ? "…" : "Ziel speichern"}
             </Button>
           </div>

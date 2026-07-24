@@ -165,11 +165,6 @@ export default function Nav() {
                   label="Sportarten"
                   onGo={go}
                 />
-                <MobileNavItem
-                  href="/potatoes"
-                  label="Der Plan 2.0"
-                  onGo={go}
-                />
               </div>
 
               {/* Logout */}
@@ -229,7 +224,6 @@ export default function Nav() {
               <NavLink href="/training" label="Training" />
               <NavLink href="/group" label="Meine Gruppe" />
               <NavLink href="/training/types" label="Sportarten" />
-              <NavLink href="/potatoes" label="Der Plan 2.0" />
             </nav>
           </div>
 

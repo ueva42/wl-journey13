@@ -5,6 +5,16 @@ import { supabaseBrowser } from "@/lib/supabase/browser";
 import { Card, CardHeader, CardBody, Divider } from "@/components/ui/Card";
 import { Button } from "@/components/ui/Button";
 import { Input } from "@/components/ui/Input";
+import PersonBar from "@/components/PersonBar";
+import {
+  createPerson,
+  deletePerson,
+  loadOrCreatePersons,
+  pickActivePerson,
+  renamePerson,
+  setStoredActivePersonId,
+  type Person,
+} from "@/lib/persons";
 
 type SportType = { id: string; name: string; active: boolean };
 
@@ -12,6 +22,7 @@ type TrainingEntry = {
   id: string;
   group_id: string;
   user_id: string;
+  person_id: string;
   sport_type_id: string;
   occurred_on: string; // YYYY-MM-DD
   duration_min: number;
@@ -82,6 +93,8 @@ export default function TrainingPage() {
 
   const [myUserId, setMyUserId] = useState<string | null>(null);
   const [groupId, setGroupId] = useState<string | null>(null);
+  const [persons, setPersons] = useState<Person[]>([]);
+  const [activePersonId, setActivePersonId] = useState<string | null>(null);
 
   const [sportTypes, setSportTypes] = useState<SportType[]>([]);
   const [entries, setEntries] = useState<TrainingEntry[]>([]);
@@ -168,12 +181,20 @@ export default function TrainingPage() {
         if (!user) {
           setMyUserId(null);
           setGroupId(null);
+          setPersons([]);
+          setActivePersonId(null);
           setSportTypes([]);
           setEntries([]);
           setStatus("Nicht eingeloggt.");
           return;
         }
         setMyUserId(user.id);
+
+        const personList = await loadOrCreatePersons(user.id);
+        const active = pickActivePerson(personList);
+        setPersons(personList);
+        setActivePersonId(active?.id ?? null);
+        if (active) setStoredActivePersonId(active.id);
 
         const { data: prof, error: pErr } = await supabase
           .from("profiles")
@@ -206,13 +227,18 @@ export default function TrainingPage() {
         const firstActive = stList.find((x) => x.active)?.id ?? "";
         setSportTypeId((prev) => prev || firstActive);
 
+        if (!active?.id) {
+          setEntries([]);
+          return;
+        }
+
         const { data: te, error: teErr } = await supabase
           .from("training_entries")
           .select(
-            "id,group_id,user_id,sport_type_id,occurred_on,duration_min,distance_km,intensity,note, sport_types(name)"
+            "id,group_id,user_id,person_id,sport_type_id,occurred_on,duration_min,distance_km,intensity,note, sport_types(name)"
           )
           .eq("group_id", gId)
-          .eq("user_id", user.id)
+          .eq("person_id", active.id)
           .order("occurred_on", { ascending: false })
           .limit(2000);
 
@@ -227,6 +253,69 @@ export default function TrainingPage() {
     })();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  async function reloadEntriesForPerson(personId: string, gId: string | null) {
+    if (!gId) {
+      setEntries([]);
+      return;
+    }
+    const { data: te, error: teErr } = await supabase
+      .from("training_entries")
+      .select(
+        "id,group_id,user_id,person_id,sport_type_id,occurred_on,duration_min,distance_km,intensity,note, sport_types(name)"
+      )
+      .eq("group_id", gId)
+      .eq("person_id", personId)
+      .order("occurred_on", { ascending: false })
+      .limit(2000);
+    if (teErr) throw teErr;
+    setEntries((te ?? []) as TrainingEntry[]);
+  }
+
+  async function selectPerson(id: string) {
+    const active = pickActivePerson(persons, id);
+    setActivePersonId(active?.id ?? null);
+    if (active) setStoredActivePersonId(active.id);
+    cancelEdit();
+    try {
+      setStatus("");
+      if (active) await reloadEntriesForPerson(active.id, groupId);
+      else setEntries([]);
+    } catch (e: any) {
+      setStatus(e?.message ?? String(e));
+    }
+  }
+
+  async function handleCreatePerson(name: string) {
+    if (!myUserId) throw new Error("Nicht eingeloggt.");
+    const created = await createPerson(myUserId, name);
+    const list = [...persons, created];
+    setPersons(list);
+    setActivePersonId(created.id);
+    setStoredActivePersonId(created.id);
+    setEntries([]);
+  }
+
+  async function handleRenamePerson(id: string, name: string) {
+    await renamePerson(id, name);
+    setPersons((prev) =>
+      prev.map((p) => (p.id === id ? { ...p, display_name: name.trim() } : p))
+    );
+  }
+
+  async function handleDeletePerson(id: string) {
+    await deletePerson(id);
+    const list = persons.filter((p) => p.id !== id);
+    const active = pickActivePerson(list);
+    setPersons(list);
+    setActivePersonId(active?.id ?? null);
+    if (active) {
+      setStoredActivePersonId(active.id);
+      await reloadEntriesForPerson(active.id, groupId);
+    } else {
+      setEntries([]);
+    }
+  }
 
   const activeSportTypeOptions = useMemo(() => sportTypes.filter((x) => x.active), [sportTypes]);
 
@@ -275,6 +364,7 @@ export default function TrainingPage() {
   async function addEntry() {
     try {
       if (!myUserId) throw new Error("Nicht eingeloggt.");
+      if (!activePersonId) throw new Error("Keine Person gewählt.");
       if (!groupId) throw new Error("Keine aktive Gruppe.");
       if (!sportTypeId) throw new Error("Bitte Sportart wählen.");
 
@@ -295,6 +385,7 @@ export default function TrainingPage() {
       const payload = {
         group_id: groupId,
         user_id: myUserId,
+        person_id: activePersonId,
         sport_type_id: sportTypeId,
         occurred_on: occurredOn,
         duration_min: dur,
@@ -307,7 +398,7 @@ export default function TrainingPage() {
         .from("training_entries")
         .insert(payload)
         .select(
-          "id,group_id,user_id,sport_type_id,occurred_on,duration_min,distance_km,intensity,note, sport_types(name)"
+          "id,group_id,user_id,person_id,sport_type_id,occurred_on,duration_min,distance_km,intensity,note, sport_types(name)"
         )
         .single();
 
@@ -348,6 +439,7 @@ export default function TrainingPage() {
   async function saveEdit(id: string) {
     try {
       if (!myUserId) throw new Error("Nicht eingeloggt.");
+      if (!activePersonId) throw new Error("Keine Person gewählt.");
 
       setRowBusyId(id);
       setStatus("");
@@ -376,9 +468,9 @@ export default function TrainingPage() {
           note: editNote.trim() ? editNote.trim() : null,
         })
         .eq("id", id)
-        .eq("user_id", myUserId)
+        .eq("person_id", activePersonId)
         .select(
-          "id,group_id,user_id,sport_type_id,occurred_on,duration_min,distance_km,intensity,note, sport_types(name)"
+          "id,group_id,user_id,person_id,sport_type_id,occurred_on,duration_min,distance_km,intensity,note, sport_types(name)"
         )
         .single();
 
@@ -396,12 +488,17 @@ export default function TrainingPage() {
   async function deleteEntry(id: string) {
     try {
       if (!myUserId) throw new Error("Nicht eingeloggt.");
+      if (!activePersonId) throw new Error("Keine Person gewählt.");
       if (!confirm("Eintrag wirklich löschen?")) return;
 
       setRowBusyId(id);
       setStatus("");
 
-      const { error } = await supabase.from("training_entries").delete().eq("id", id).eq("user_id", myUserId);
+      const { error } = await supabase
+        .from("training_entries")
+        .delete()
+        .eq("id", id)
+        .eq("person_id", activePersonId);
       if (error) throw error;
 
       setEntries((prev) => prev.filter((x) => x.id !== id));
@@ -427,6 +524,16 @@ export default function TrainingPage() {
           {fmtDateDE(weekStartISO)} – {fmtDateDE(weekEndISO)} (Mo–So)
         </div>
       </div>
+
+      <PersonBar
+        persons={persons}
+        activeId={activePersonId}
+        busy={busy || loading}
+        onSelect={(id) => void selectPerson(id)}
+        onCreate={handleCreatePerson}
+        onRename={handleRenamePerson}
+        onDelete={handleDeletePerson}
+      />
 
       {loading ? (
         <div className="rounded-2xl border border-white/10 bg-white/5 p-4 text-sm">Lade…</div>
@@ -571,7 +678,7 @@ export default function TrainingPage() {
                 </div>
 
                 <div className="md:col-span-2">
-                  <Button onClick={addEntry} disabled={busy || !myUserId || !groupId} variant="solid" className="w-full">
+                  <Button onClick={addEntry} disabled={busy || !myUserId || !groupId || !activePersonId} variant="solid" className="w-full">
                     {busy ? "…" : "Speichern"}
                   </Button>
                 </div>
